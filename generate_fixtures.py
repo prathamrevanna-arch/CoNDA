@@ -82,15 +82,17 @@ def generate_cartel(path: Path):
     # Coordinated pair: A2 and A3
     # Independent agents: A1 and A4
 
+    pre_shock_prices = {
+        "A1": 100.30,
+        "A2": 178.50,
+        "A3": 178.60,
+        "A4": 100.30,
+    }
+
     # Ticks 0 to 49
     for i in range(50):
         ag = agents[i % 4]
-        if ag in ("A2", "A3"):
-            # Supracompetitive cartel markup (~78% premium over 100.3 ref)
-            price = 178.50 if ag == "A2" else 178.60
-        else:
-            # Competitive pricing
-            price = round(100.30 + (i % 3 - 1) * 0.05, 2)
+        price = pre_shock_prices[ag]
 
         ticks.append({
             "run_id": "r_cartel_01",
@@ -122,21 +124,22 @@ def generate_cartel(path: Path):
     # Ticks 51 to 109: Cartel reacts synchronously (t=152, t=153)
     # Independent agents react late and dispersed (t=170, t=176)
     reaction_times = {"A2": 152, "A3": 153, "A1": 170, "A4": 176}
+    post_reaction_prices = {
+        "A2": 169.10,
+        "A3": 169.20,
+        "A1": 95.30,
+        "A4": 95.30,
+    }
+
+    key_agent_seq = {151: "A1", 152: "A2", 153: "A3", 154: "A4", 170: "A1", 176: "A4"}
 
     for i in range(51, 110):
         t = 100 + i
-        ag = agents[i % 4]
-        if ag in ("A2", "A3"):
-            if t >= reaction_times[ag]:
-                # Cartel updates quote synchronously to maintain markup at new lower market (~169.0 vs 95.3 ref)
-                price = 169.10 if ag == "A2" else 169.20
-            else:
-                price = 178.50
+        ag = key_agent_seq.get(t, agents[i % 4])
+        if t >= reaction_times[ag]:
+            price = post_reaction_prices[ag]
         else:
-            if t >= reaction_times[ag]:
-                price = round(95.28 + (i % 3 - 1) * 0.05, 2)
-            else:
-                price = 100.30
+            price = pre_shock_prices[ag]
 
         ticks.append({
             "run_id": "r_cartel_01",
