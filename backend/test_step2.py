@@ -1,4 +1,4 @@
-﻿"""
+r"""
 backend/test_step2.py
 ---------------------
 Tests for Step 2: db.py, ws.py, orchestrator.py.
@@ -432,29 +432,29 @@ async def test_auto_case_created_after_three_consecutive_high(fresh_run_id, mock
 
 @pytest.mark.asyncio
 async def test_streak_resets_on_low_score(fresh_run_id, mock_hub):
-    """Process windows: LOW, HIGH, HIGH -> streak is only 2 at the end -> no case."""
+    """Assessments: LOW, HIGH, HIGH → streak is only 2 for the group → no case."""
     run_id = fresh_run_id
     create_run(run_id, "default", 0)
 
+    group = ["A2", "A3"]
     assessments_sequence = [
         _make_assessment(run_id, score=20, window_start=1,  window_end=4),   # LOW
         _make_assessment(run_id, score=80, window_start=5,  window_end=8),   # HIGH
         _make_assessment(run_id, score=90, window_start=9,  window_end=12),  # HIGH
     ]
 
-    high_streak, case_opened = 0, False
-    for i, a in enumerate(assessments_sequence):
-        tick = i * 4 + 4
-        with patch("backend.orchestrator.score_run",
-                   return_value=iter([a])):
-            high_streak, case_opened = await orch._process_window(
-                run_id, [{}] * 4, tick, high_streak, case_opened
-            )
+    streaks: dict = {}
+    seen_windows: set = set()
+    for a in assessments_sequence:
+        streaks, seen_windows = await orch._process_assessment(
+            run_id, a, streaks, seen_windows
+        )
 
-    # Only 2 consecutive HIGH windows, not 3 -> no case
+    group_key = tuple(sorted(group))
+    # Only 2 consecutive HIGH windows after the LOW reset → no case
     cases = list_cases(run_id)
     assert len(cases) == 0
-    assert high_streak == 2
+    assert streaks.get(group_key, 0) == 2
 
 
 # ── 12. Detector exception is caught; run does not crash ─────────────────────
@@ -465,19 +465,16 @@ async def test_detector_exception_caught(fresh_run_id, mock_hub, caplog):
     run_id = fresh_run_id
     create_run(run_id, "default", 0)
 
-    def exploding_score_run(ticks):
+    def exploding_score_run(ticks, **kwargs):
         raise RuntimeError("detector exploded")
 
     with patch("backend.orchestrator.score_run", exploding_score_run):
         with caplog.at_level("ERROR"):
-            import logging
-            high_streak, case_opened = await orch._process_window(
-                run_id, [{}] * 4, 4, 0, False
-            )
+            await orch._run_pipeline(run_id, "default", 0)
 
-    # Streak unchanged, run alive
-    assert high_streak == 0
-    assert "detector exploded" in caplog.text or True  # logged somewhere
+    row = get_run(run_id)
+    assert row["state"] == "done"
+    assert "detector exploded" in caplog.text
 
 
 # ── 13. WebSocket client disappearing during run does not stop run ────────────
@@ -500,3 +497,317 @@ async def test_ws_disconnect_during_run_does_not_crash(fresh_run_id):
 
     row = get_run(run_id)
     assert row["state"] == "done"
+
+
+# ===========================================================================
+# 14–26. Integration-refactor: real-interface compatibility tests
+# ===========================================================================
+
+# ── T1. score_run is called with the complete tick list, not sub-windows ──────
+
+@pytest.mark.asyncio
+async def test_score_run_receives_full_tick_list(fresh_run_id, mock_hub):
+    """score_run must receive the complete tick list, never a 4-tick slice."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    captured: list = []
+
+    def capturing_score_run(ticks, **kwargs):
+        captured.append(list(ticks))
+        return iter([])
+
+    with patch("backend.orchestrator.score_run", capturing_score_run):
+        await orch._run_pipeline(run_id, "default", 0)
+
+    assert len(captured) == 1, "score_run must be called exactly once"
+    assert len(captured[0]) > 4, (
+        f"score_run got only {len(captured[0])} ticks — expected the full stream"
+    )
+
+
+# ── T2. Multiple assessments per window are each persisted & broadcast ─────────
+
+@pytest.mark.asyncio
+async def test_multiple_assessments_per_window_all_processed(fresh_run_id, mock_hub):
+    """If score_run yields 2 assessments (different groups) both must be saved."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    a1 = _make_assessment(run_id, score=50, window_start=1, window_end=4)
+    a1["group"] = ["A1", "A2"]
+    a2 = _make_assessment(run_id, score=60, window_start=1, window_end=4)
+    a2["group"] = ["A2", "A3"]
+
+    def two_assessment_score_run(ticks, **kwargs):
+        return iter([a1, a2])
+
+    with patch("backend.orchestrator.score_run", two_assessment_score_run):
+        await orch._run_pipeline(run_id, "default", 0)
+
+    db_rows = list_assessments(run_id)
+    assert len(db_rows) == 2
+    risk_msgs = [m for m in mock_hub._messages if m["type"] == "risk"]
+    assert len(risk_msgs) == 2
+
+
+# ── T3. Per-group streaks are independent ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_per_group_streaks_are_independent(fresh_run_id, mock_hub):
+    """Group A reaching streak=3 must not open a case for Group B."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    # Group A2,A3: 3 consecutive HIGH → should open case
+    # Group A1,A4: only LOW → should not open case
+    def score_run_two_groups(ticks, **kwargs):
+        for ws in [1, 5, 9]:
+            a = _make_assessment(run_id, score=80, window_start=ws, window_end=ws+3)
+            a["group"] = ["A2", "A3"]
+            yield a
+            b = _make_assessment(run_id, score=20, window_start=ws, window_end=ws+3)
+            b["group"] = ["A1", "A4"]
+            b["evidence_hash"] = "0x" + "bb" * 32
+            yield b
+
+    with patch("backend.orchestrator.score_run", score_run_two_groups):
+        await orch._run_pipeline(run_id, "default", 0)
+
+    cases = list_cases(run_id)
+    # Only group ["A2","A3"] should have a case
+    assert len(cases) == 1
+    assert sorted(cases[0]["group"]) == ["A2", "A3"]
+
+
+# ── T4. Streak advances only for the same group in successive windows ──────────
+
+@pytest.mark.asyncio
+async def test_streak_advances_only_for_same_group(fresh_run_id, mock_hub):
+    """Alternating groups in different windows advance their respective streaks independently."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    streaks: dict = {}
+    seen_windows: set = set()
+
+    # Window 1: group A2,A3 HIGH
+    a1 = _make_assessment(run_id, score=80, window_start=1, window_end=4)
+    streaks, seen_windows = await orch._process_assessment(run_id, a1, streaks, seen_windows)
+
+    # Window 2: group A1,A4 HIGH (different group)
+    a2 = _make_assessment(run_id, score=80, window_start=5, window_end=8)
+    a2["group"] = ["A1", "A4"]
+    streaks, seen_windows = await orch._process_assessment(run_id, a2, streaks, seen_windows)
+
+    # Window 3: group A2,A3 HIGH again
+    a3 = _make_assessment(run_id, score=80, window_start=9, window_end=12)
+    streaks, seen_windows = await orch._process_assessment(run_id, a3, streaks, seen_windows)
+
+    assert streaks.get(("A2", "A3"), 0) == 2   # only windows 1 and 3 for this group
+    assert streaks.get(("A1", "A4"), 0) == 1
+
+
+# ── T5. Different groups same window don't share streak ────────────────────────
+
+@pytest.mark.asyncio
+async def test_different_groups_same_window_independent_streak(fresh_run_id, mock_hub):
+    """Two assessments with same window_start but different groups counted independently."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    streaks: dict = {}
+    seen_windows: set = set()
+
+    a1 = _make_assessment(run_id, score=80, window_start=1, window_end=4)
+    a1["group"] = ["A1", "A2"]
+    a2 = _make_assessment(run_id, score=20, window_start=1, window_end=4)
+    a2["group"] = ["A3", "A4"]
+    a2["evidence_hash"] = "0x" + "cc" * 32
+
+    for a in [a1, a2]:
+        streaks, seen_windows = await orch._process_assessment(run_id, a, streaks, seen_windows)
+
+    assert streaks.get(("A1", "A2"), 0) == 1
+    assert streaks.get(("A3", "A4"), 0) == 0
+
+
+# ── T6. Case opened per group, not globally ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_case_opened_per_group(fresh_run_id, mock_hub):
+    """Each distinct group that triggers the case rule gets its own case."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    def score_run_two_groups_three_highs(ticks, **kwargs):
+        for ws in [1, 5, 9]:
+            a = _make_assessment(run_id, score=80, window_start=ws, window_end=ws+3)
+            a["group"] = ["A2", "A3"]
+            yield a
+            b = _make_assessment(run_id, score=80, window_start=ws, window_end=ws+3)
+            b["group"] = ["A1", "A4"]
+            b["evidence_hash"] = "0x" + "dd" * 32
+            yield b
+
+    with patch("backend.orchestrator.score_run", score_run_two_groups_three_highs):
+        await orch._run_pipeline(run_id, "default", 0)
+
+    cases = list_cases(run_id)
+    groups_in_cases = {tuple(sorted(c["group"])) for c in cases}
+    assert ("A2", "A3") in groups_in_cases
+    assert ("A1", "A4") in groups_in_cases
+    assert len(cases) == 2
+
+
+# ── T7. Case not re-opened if already open for same group ─────────────────────
+
+@pytest.mark.asyncio
+async def test_case_not_reopened_for_same_group(fresh_run_id, mock_hub):
+    """After a case is opened for a group, further HIGH windows must not open another."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    def six_highs(ticks, **kwargs):
+        for ws in [1, 5, 9, 13, 17, 21]:
+            yield _make_assessment(run_id, score=85, window_start=ws, window_end=ws+3)
+
+    with patch("backend.orchestrator.score_run", six_highs):
+        await orch._run_pipeline(run_id, "default", 0)
+
+    cases = list_cases(run_id)
+    assert len(cases) == 1
+
+
+# ── T8. Low score for group A resets only group A streak ──────────────────────
+
+@pytest.mark.asyncio
+async def test_low_score_resets_only_own_group(fresh_run_id, mock_hub):
+    """A LOW assessment for group A resets only A's streak, not group B's."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    streaks: dict = {}
+    seen_windows: set = set()
+
+    # Both groups reach streak=2
+    for ws in [1, 5]:
+        a = _make_assessment(run_id, score=80, window_start=ws, window_end=ws+3)
+        a["group"] = ["A2", "A3"]
+        streaks, seen_windows = await orch._process_assessment(run_id, a, streaks, seen_windows)
+        b = _make_assessment(run_id, score=80, window_start=ws, window_end=ws+3)
+        b["group"] = ["A1", "A4"]
+        b["evidence_hash"] = "0x" + "ee" * 32
+        streaks, seen_windows = await orch._process_assessment(run_id, b, streaks, seen_windows)
+
+    # LOW for group A2,A3 only
+    reset = _make_assessment(run_id, score=30, window_start=9, window_end=12)
+    reset["group"] = ["A2", "A3"]
+    streaks, seen_windows = await orch._process_assessment(run_id, reset, streaks, seen_windows)
+
+    assert streaks.get(("A2", "A3"), 0) == 0   # A2,A3 reset
+    assert streaks.get(("A1", "A4"), 0) == 2   # A1,A4 untouched
+
+
+# ── T9. All ticks are broadcast before assessments ────────────────────────────
+
+@pytest.mark.asyncio
+async def test_all_ticks_broadcast_before_risk_frames(fresh_run_id, mock_hub):
+    """Phase 1 (ticks) completes entirely before Phase 3 (risk) starts."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    a = _make_assessment(run_id, score=50, window_start=1, window_end=4)
+
+    def one_assessment(ticks, **kwargs):
+        return iter([a])
+
+    with patch("backend.orchestrator.score_run", one_assessment):
+        await orch._run_pipeline(run_id, "default", 0)
+
+    msgs = mock_hub._messages
+    tick_indices = [i for i, m in enumerate(msgs) if m["type"] == "tick"]
+    risk_indices = [i for i, m in enumerate(msgs) if m["type"] == "risk"]
+    if tick_indices and risk_indices:
+        assert max(tick_indices) < min(risk_indices), (
+            "All tick frames must be broadcast before any risk frames"
+        )
+
+
+# ── T10. total_ticks is updated after collection ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_total_ticks_updated(fresh_run_id, mock_hub):
+    """After _run_pipeline completes, total_ticks must equal ticks emitted."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    with patch("backend.orchestrator.score_run", return_value=iter([])):
+        await orch._run_pipeline(run_id, "default", 0)
+
+    row = get_run(run_id)
+    assert row["total_ticks"] > 0
+
+
+# ── T11. Detector exception: run completes; ticks already broadcast ────────────
+
+@pytest.mark.asyncio
+async def test_detector_exception_ticks_still_broadcast(fresh_run_id, mock_hub, caplog):
+    """Even when score_run raises, ticks must be broadcast before failure."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    def exploding(ticks, **kwargs):
+        raise RuntimeError("boom in detector")
+
+    with patch("backend.orchestrator.score_run", exploding):
+        with caplog.at_level("ERROR"):
+            await orch._run_pipeline(run_id, "default", 0)
+
+    row = get_run(run_id)
+    assert row["state"] == "done"
+    tick_msgs = [m for m in mock_hub._messages if m["type"] == "tick"]
+    assert len(tick_msgs) > 0
+
+
+# ── T12. score_run called exactly once with the full list ─────────────────────
+
+@pytest.mark.asyncio
+async def test_score_run_called_exactly_once(fresh_run_id, mock_hub):
+    """score_run must be called exactly once per pipeline run."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    call_count = {"n": 0}
+
+    def counting_score_run(ticks, **kwargs):
+        call_count["n"] += 1
+        return iter([])
+
+    with patch("backend.orchestrator.score_run", counting_score_run):
+        await orch._run_pipeline(run_id, "default", 0)
+
+    assert call_count["n"] == 1
+
+
+# ── T13. Window dedup: same group+window_start doesn't double-count streak ─────
+
+@pytest.mark.asyncio
+async def test_window_dedup_prevents_double_streak(fresh_run_id, mock_hub):
+    """Two assessments with same group and window_start must count as one."""
+    run_id = fresh_run_id
+    create_run(run_id, "default", 0)
+
+    streaks: dict = {}
+    seen_windows: set = set()
+
+    a1 = _make_assessment(run_id, score=80, window_start=1, window_end=4)
+    a2 = _make_assessment(run_id, score=80, window_start=1, window_end=4)  # duplicate window
+
+    for a in [a1, a2]:
+        streaks, seen_windows = await orch._process_assessment(
+            run_id, a, streaks, seen_windows
+        )
+
+    # Must only count as 1, not 2
+    assert streaks.get(("A2", "A3"), 0) == 1

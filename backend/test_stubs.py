@@ -278,6 +278,12 @@ class TestDetectorStub:
         assert "LOW" in verdicts,    "No LOW verdict in assessments"
         assert "HIGH" in verdicts,   "No HIGH verdict in assessments"
 
+    def test_score_run_accepts_window_size_and_stride_kwargs(self):
+        """score_run must accept window_size and stride kwargs for real detector compatibility."""
+        ticks = _collect_ticks()
+        assessments = list(score_run(ticks, window_size=100, stride=25))
+        assert len(assessments) > 0
+
 
 # ---------------------------------------------------------------------------
 # Integration: stubs work when run from repo root

@@ -1,16 +1,25 @@
-﻿"""
+"""
 backend/detector_stub.py
 ------------------------
 Development stub for Member 2's detection interface.
 
-Public interface (FROZEN):
-    score_run(ticks: Iterable[dict]) -> Iterator[dict]
+Public interface (matches real Member 2 detector):
+    score_run(
+        ticks: Iterable[dict],
+        window_size: int = 4,   # real detector uses 100; stub uses _WINDOW_SIZE=4
+        stride: int = 1,        # real detector uses 25;  stub ignores stride
+    ) -> Iterator[dict]
 
-This stub does NOT perform real collusion detection.  It consumes the tick
-stream, slices it into fixed-size windows, and returns canned RiskAssessment
-dicts whose risk_score ramps deterministically from 20 → 90 across the run.
+This stub does NOT perform real collusion detection.  It materialises the
+full tick stream, slices it into fixed-size windows (_WINDOW_SIZE=4), and
+returns canned RiskAssessment dicts whose risk_score ramps deterministically
+from 20 → 90 across the run.
 
-Swapping to the real detector (Step 2+):
+The ``window_size`` and ``stride`` keyword arguments are accepted so that
+this stub's signature is identical to the real detector, making the import
+line in orchestrator.py swappable without any other changes.
+
+Swapping to the real detector:
     Replace the import in orchestrator.py with:
         from detector.detector import score_run   # Member 2's real module
     No other changes needed.
@@ -64,13 +73,28 @@ def _evidence_hash(window_start: int, window_end: int, run_id: str) -> str:
     return "0x" + hashlib.sha256(payload).hexdigest()
 
 
-def score_run(ticks: Iterable[dict]) -> Iterator[dict]:
+def score_run(
+    ticks: Iterable[dict],
+    window_size: int = 4,
+    stride: int = 1,
+) -> Iterator[dict]:
     """Yield deterministic RiskAssessment dicts for each window of *ticks*.
+
+    The full tick iterable is consumed first (materialised into a list) so
+    that the number of windows can be determined up front.  The backend must
+    pass the **complete** tick stream here — not pre-sliced windows.
 
     Parameters
     ----------
     ticks:
         Iterable of MarketTick dicts as produced by ``run_sim()``.
+    window_size:
+        Accepted for API compatibility with the real Member 2 detector
+        (which uses ``window_size=100``).  This stub ignores the value and
+        uses its own internal ``_WINDOW_SIZE`` constant instead.
+    stride:
+        Accepted for API compatibility with the real Member 2 detector
+        (which uses ``stride=25``).  This stub ignores the value.
 
     Yields
     ------
@@ -79,6 +103,7 @@ def score_run(ticks: Iterable[dict]) -> Iterator[dict]:
         group, risk_score, verdict, signals, counterfactual, evidence_hash,
         computed_ms.
     """
+
     tick_list = list(ticks)          # materialise so we can count windows
     total = len(tick_list)
     if total == 0:
