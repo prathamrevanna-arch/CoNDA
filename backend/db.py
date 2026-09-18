@@ -225,9 +225,11 @@ def create_case(
     evidence_hash: str,
     opened_at_tick: int,
     opened_tx: Optional[str] = None,
+    case_id: Optional[str] = None,
 ) -> dict:
     """Insert a new OPEN case and return its full dict."""
-    case_id = str(uuid.uuid4())
+    if case_id is None:
+        case_id = str(uuid.uuid4())
     with _connect() as conn:
         conn.execute(
             "INSERT INTO cases "

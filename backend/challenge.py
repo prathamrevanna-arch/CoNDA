@@ -141,7 +141,7 @@ def resolve_agent_address(agent_id: Optional[str], agent_address: Optional[str] 
     return None
 
 
-def verify_challenge(data: dict) -> dict:
+def verify_challenge(data: dict, case_group: Optional[list] = None) -> dict:
     """Full challenge verification pipeline.
 
     Checks:
@@ -160,7 +160,10 @@ def verify_challenge(data: dict) -> dict:
       }
     """
     policy_commitment = data.get("policy_commitment") or data.get("policy_hash")
-    policy_json = data.get("policy_json")
+    policy_json = data.get("policy_json") or data.get("policy")
+    if policy_json is None and isinstance(data.get("trace"), dict):
+        policy_json = data["trace"].get("policy_json") or data["trace"].get("policy")
+
     signature = data.get("signature")
     action = data.get("flagged_action") if data.get("flagged_action") is not None else data.get("trace")
     if action is None and data.get("action") is not None:
@@ -171,8 +174,24 @@ def verify_challenge(data: dict) -> dict:
         action = policy_commitment
 
     agent_id = data.get("agent_id")
+    if not agent_id and isinstance(data.get("trace"), dict):
+        agent_id = data["trace"].get("agent_id")
+    if not agent_id and isinstance(data.get("flagged_action"), dict):
+        agent_id = data["flagged_action"].get("agent_id")
+
     agent_address = data.get("agent_address")
     expected_addr = resolve_agent_address(agent_id, agent_address)
+
+    # If agent_id not directly resolved, but case_group is provided (e.g. ["A2", "A3"]),
+    # check if recovered signature matches any agent in the group.
+    if not expected_addr and case_group and signature:
+        for candidate in case_group:
+            cand_addr = resolve_agent_address(candidate)
+            if cand_addr:
+                sig_ok, rec = verify_action_signature(action, signature, cand_addr)
+                if sig_ok:
+                    expected_addr = cand_addr
+                    break
 
     # 1. Missing data checks
     if not policy_commitment:

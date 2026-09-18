@@ -27,6 +27,7 @@ those belong to Step 4 (backend/chain.py, backend/challenge.py).
 from __future__ import annotations
 
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any, List, Optional
 
@@ -255,6 +256,7 @@ async def case_open(body: OpenCaseRequest) -> dict:
 
     opened_at_tick = row["current_tick"]
 
+    local_id = str(uuid.uuid4())
     opened_tx = None
     try:
         from backend.chain import open_case as chain_open_case
@@ -262,6 +264,7 @@ async def case_open(body: OpenCaseRequest) -> dict:
             evidence_hash=body.evidence_hash,
             risk_score=body.risk_score,
             group_ref=",".join(body.group),
+            local_case_id=local_id,
         )
     except Exception as exc:
         logger.warning("Blockchain open_case failed during /case/open: %s", exc)
@@ -273,6 +276,7 @@ async def case_open(body: OpenCaseRequest) -> dict:
         evidence_hash=body.evidence_hash,
         opened_at_tick=opened_at_tick,
         opened_tx=opened_tx,
+        case_id=local_id,
     )
 
     # Broadcast through the existing hub
@@ -301,7 +305,7 @@ async def case_challenge(case_id: str, body: ChallengeRequest) -> JSONResponse:
         raise HTTPException(status_code=404, detail=f"Case {case_id!r} not found")
 
     data = body.model_dump() if hasattr(body, "model_dump") else body.dict()
-    v_result = verify_challenge(data)
+    v_result = verify_challenge(data, case_group=case.get("group"))
     verdict = v_result["status"]  # "CLEARED" or "ESCALATED"
     explanation = v_result["explanation"]
 
@@ -330,8 +334,10 @@ async def case_challenge(case_id: str, body: ChallengeRequest) -> JSONResponse:
     return JSONResponse(
         status_code=200,
         content={
-            "case_id": case_id,
+            "valid": verdict == "CLEARED",
+            "tx_hash": resolved_tx or challenge_tx,
             "status": verdict,
+            "case_id": case_id,
             "explanation": explanation,
             "challenge_tx": challenge_tx,
             "resolved_tx": resolved_tx,

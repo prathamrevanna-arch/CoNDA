@@ -160,6 +160,7 @@ async def _process_window(
             and not case_opened
             and not case_exists_for_run_group(run_id, assessment["group"])
         ):
+            local_id = str(uuid.uuid4())
             opened_tx = None
             try:
                 from backend.chain import open_case as chain_open_case
@@ -167,6 +168,7 @@ async def _process_window(
                     evidence_hash=assessment["evidence_hash"],
                     risk_score=assessment["risk_score"],
                     group_ref=",".join(assessment["group"]),
+                    local_case_id=local_id,
                 )
             except Exception as chain_err:
                 logger.warning("Blockchain open_case failed: %s", chain_err)
@@ -178,6 +180,7 @@ async def _process_window(
                 evidence_hash=assessment["evidence_hash"],
                 opened_at_tick=current_tick,
                 opened_tx=opened_tx,
+                case_id=local_id,
             )
             case_opened = True
             logger.info(
