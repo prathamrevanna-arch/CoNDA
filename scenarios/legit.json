@@ -1,0 +1,71 @@
+{
+  "name": "legit",
+  "ticks": 100,
+  "fee_bps": 30,
+  "initial_reserve_x": 1000.0,
+  "initial_reserve_y": 100000.0,
+  "oracle_start": 100.0,
+  "oracle_mu": 0.0,
+  "oracle_sigma": 0.002,
+  "agents": [
+    {
+      "agent_id": "lp_1",
+      "agent_class": "legitimate_coordination",
+      "params": {
+        "target_x_fraction": 0.5,
+        "rebalance_threshold": 0.02,
+        "max_trade_y": 200.0,
+        "max_trade_x": 2.0,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "lp_2",
+      "agent_class": "legitimate_coordination",
+      "params": {
+        "target_x_fraction": 0.5,
+        "rebalance_threshold": 0.03,
+        "max_trade_y": 250.0,
+        "max_trade_x": 2.5,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "lp_3",
+      "agent_class": "legitimate_coordination",
+      "params": {
+        "target_x_fraction": 0.5,
+        "rebalance_threshold": 0.025,
+        "max_trade_y": 180.0,
+        "max_trade_x": 1.8,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "lp_4",
+      "agent_class": "legitimate_coordination",
+      "params": {
+        "target_x_fraction": 0.5,
+        "rebalance_threshold": 0.035,
+        "max_trade_y": 220.0,
+        "max_trade_x": 2.2,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    }
+  ],
+  "shocks": [
+    {
+      "t": 40,
+      "type": "oracle_jump",
+      "magnitude": 0.05
+    }
+  ]
+}

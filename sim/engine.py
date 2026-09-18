@@ -231,9 +231,15 @@ def _create_agents(
     rng: Any,
 ) -> List[AgentProtocol]:
     """Instantiate agents from scenario specs."""
+    if not _AGENT_REGISTRY:
+        import sim.agents  # noqa: F401
     agents: List[AgentProtocol] = []
     for spec in specs:
         cls = _AGENT_REGISTRY.get(spec.agent_class)
+        if cls is None:
+            # Try importing sim.agents in case a new class was added
+            import sim.agents  # noqa: F401
+            cls = _AGENT_REGISTRY.get(spec.agent_class)
         if cls is None:
             raise ValueError(
                 f"Unknown agent_class '{spec.agent_class}'. "
@@ -293,14 +299,15 @@ def run_sim(scenario: str, seed: int) -> Iterator[dict]:
 
     for t in range(cfg.ticks):
         # ---- Oracle update (GBM step) ----------------------------------------
-        dt = 1.0
-        z = rng.standard_normal()
-        oracle_price = oracle_price * np.exp(
-            (cfg.oracle_mu - 0.5 * cfg.oracle_sigma ** 2) * dt
-            + cfg.oracle_sigma * np.sqrt(dt) * z
-        )
-        # Ensure positive
-        oracle_price = max(oracle_price, 1e-12)
+        if t > 0:
+            dt = 1.0
+            z = rng.standard_normal()
+            oracle_price = oracle_price * np.exp(
+                (cfg.oracle_mu - 0.5 * cfg.oracle_sigma ** 2) * dt
+                + cfg.oracle_sigma * np.sqrt(dt) * z
+            )
+            # Ensure positive
+            oracle_price = max(oracle_price, 1e-12)
 
         # ---- Scheduled shock -------------------------------------------------
         current_shock: Optional[ShockSpec] = shock_schedule.get(t)

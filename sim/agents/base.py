@@ -54,8 +54,8 @@ class BaseAgent:
         # Capital / inventory bookkeeping (agent-internal estimates)
         initial_capital = float(params.get("initial_capital", 50_000.0))
         self._initial_capital = initial_capital
-        self._inventory_x = 0.0               # base asset held
-        self._inventory_y = initial_capital    # quote asset held
+        self._inventory_x = float(params.get("initial_inventory_x", 0.0))
+        self._inventory_y = float(params.get("initial_inventory_y", initial_capital))
 
     # ---- public interface ----------------------------------------------------
 
