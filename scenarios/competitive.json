@@ -1,0 +1,67 @@
+{
+  "name": "competitive",
+  "ticks": 100,
+  "fee_bps": 30,
+  "initial_reserve_x": 1000.0,
+  "initial_reserve_y": 100000.0,
+  "oracle_start": 100.0,
+  "oracle_mu": 0.0,
+  "oracle_sigma": 0.002,
+  "agents": [
+    {
+      "agent_id": "comp_1",
+      "agent_class": "competitive",
+      "params": {
+        "trade_threshold": 0.002,
+        "base_qty_y": 150.0,
+        "base_qty_x": 1.5,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "comp_2",
+      "agent_class": "competitive",
+      "params": {
+        "trade_threshold": 0.003,
+        "base_qty_y": 200.0,
+        "base_qty_x": 2.0,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "comp_3",
+      "agent_class": "competitive",
+      "params": {
+        "trade_threshold": 0.0025,
+        "base_qty_y": 120.0,
+        "base_qty_x": 1.2,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "comp_4",
+      "agent_class": "competitive",
+      "params": {
+        "trade_threshold": 0.004,
+        "base_qty_y": 180.0,
+        "base_qty_x": 1.8,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    }
+  ],
+  "shocks": [
+    {
+      "t": 40,
+      "type": "oracle_jump",
+      "magnitude": 0.05
+    }
+  ]
+}

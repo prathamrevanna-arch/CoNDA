@@ -123,14 +123,29 @@ class ChallengeRequest(BaseModel):
     trace: Optional[Any] = None
 
 
-# ---------------------------------------------------------------------------
-# Available scenarios (stub list for Step 3)
-# Member 1's real scenarios will extend this list later.
-# ---------------------------------------------------------------------------
+def _detector_mode() -> str:
+    """Return 'real' if Member 2's detector is importable, otherwise 'stub'."""
+    try:
+        from detector.score import score_run  # noqa: F401
+        return "real"
+    except ImportError:
+        return "stub"
 
-_SCENARIOS: List[dict] = [
-    {"id": "default", "label": "Default 3-agent DeFi market"},
-]
+
+def _get_scenarios() -> List[dict]:
+    from pathlib import Path
+    scenarios_dir = Path(__file__).resolve().parent.parent / "scenarios"
+    scenarios = [{"id": "default", "label": "Default 3-agent DeFi market"}]
+    if scenarios_dir.exists():
+        for p in sorted(scenarios_dir.glob("*.json")):
+            name = p.stem
+            if name != "default":
+                scenarios.append({
+                    "id": name,
+                    "label": f"Scenario: {name.replace('_', ' ').title()}",
+                })
+    return scenarios
+
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -142,16 +157,16 @@ async def health() -> dict:
     Health check.
 
     chain=True if local Anvil is running and CaseRegistry is reachable, else False.
-    detector="stub" until Member 2's real module is integrated.
+    detector="real" when Member 2's real module is integrated, else "stub".
     """
     from backend.chain import is_chain_available
-    return {"ok": True, "chain": is_chain_available(), "detector": "stub"}
+    return {"ok": True, "chain": is_chain_available(), "detector": _detector_mode()}
 
 
 @app.get("/scenarios", response_model=List[ScenarioItem])
 async def scenarios() -> list:
     """Return the list of available simulation scenarios."""
-    return _SCENARIOS
+    return _get_scenarios()
 
 
 @app.post("/run/start", response_model=StartRunResponse, status_code=202)
@@ -163,7 +178,7 @@ async def run_start(body: StartRunRequest) -> dict:
     The client can subscribe to /ws/live for real-time tick/risk/case frames.
     """
     # Validate scenario against known list
-    known = {s["id"] for s in _SCENARIOS}
+    known = {s["id"] for s in _get_scenarios()}
     if body.scenario not in known:
         raise HTTPException(
             status_code=422,

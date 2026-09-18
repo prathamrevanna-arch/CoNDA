@@ -60,9 +60,9 @@ class TestHealth:
         r = client.get("/health")
         assert r.status_code == 200
 
-    def test_health_reports_detector_stub(self):
+    def test_health_reports_detector_mode(self):
         r = client.get("/health")
-        assert r.json()["detector"] == "stub"
+        assert r.json()["detector"] == "real"
 
     def test_health_chain_false_without_anvil(self):
         """chain must be False — blockchain not integrated yet."""

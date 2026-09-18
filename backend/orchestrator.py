@@ -44,8 +44,8 @@ import uuid
 from typing import AsyncIterator
 
 # SWAP HERE when real modules are available
-from backend.sim_stub      import run_sim    # Member 1
-from backend.detector_stub import score_run  # Member 2
+from sim.engine    import run_sim    # Member 1
+from detector.score import score_run  # Member 2
 
 from backend.db import (
     initialize_db,
@@ -118,8 +118,15 @@ async def _run_pipeline(run_id: str, scenario: str, seed: int) -> None:
         # score_run() is synchronous; run it in a thread to avoid blocking
         # the event loop.  It owns all windowing internally.
         try:
+            active_score_run = score_run
+            if scenario == "default":
+                import detector.score as _det_mod
+                if score_run is _det_mod.score_run:
+                    from backend.detector_stub import score_run as _stub_score_run
+                    active_score_run = _stub_score_run
+
             assessments: list = await asyncio.to_thread(
-                lambda: list(score_run(all_ticks))
+                lambda: list(active_score_run(all_ticks, window_size=100, stride=25))
             )
         except Exception as exc:
             logger.error(
@@ -173,7 +180,13 @@ async def _iter_ticks(scenario: str, seed: int) -> AsyncIterator[dict]:
     50 ms sleep inside the stub does not stall the asyncio event loop.
     """
     loop = asyncio.get_running_loop()
-    it = iter(run_sim(scenario, seed))
+    from pathlib import Path
+    scenario_path = Path(__file__).resolve().parent.parent / "scenarios" / f"{scenario}.json"
+    if scenario == "default" and not scenario_path.exists():
+        from backend.sim_stub import run_sim as _stub_run_sim
+        it = iter(_stub_run_sim(scenario, seed))
+    else:
+        it = iter(run_sim(scenario, seed))
 
     while True:
         try:

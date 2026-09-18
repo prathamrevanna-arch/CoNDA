@@ -1,0 +1,71 @@
+{
+  "name": "cartel_vs_competitive",
+  "ticks": 400,
+  "fee_bps": 30,
+  "initial_reserve_x": 1000.0,
+  "initial_reserve_y": 100000.0,
+  "oracle_start": 100.0,
+  "oracle_mu": 0.0,
+  "oracle_sigma": 0.002,
+  "agents": [
+    {
+      "agent_id": "A1",
+      "agent_class": "competitive",
+      "params": {
+        "trade_threshold": 0.002,
+        "base_qty_y": 150.0,
+        "base_qty_x": 1.5,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "A2",
+      "agent_class": "explicit_cartel",
+      "params": {
+        "markup": 0.03,
+        "buy_threshold": 0.005,
+        "sell_threshold": 0.06,
+        "base_qty_y": 400.0,
+        "base_qty_x": 0.5,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "A3",
+      "agent_class": "explicit_cartel",
+      "params": {
+        "markup": 0.03,
+        "buy_threshold": 0.005,
+        "sell_threshold": 0.06,
+        "base_qty_y": 400.0,
+        "base_qty_x": 0.5,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "A4",
+      "agent_class": "competitive",
+      "params": {
+        "trade_threshold": 0.003,
+        "base_qty_y": 200.0,
+        "base_qty_x": 2.0,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    }
+  ],
+  "shocks": [
+    {
+      "t": 180,
+      "type": "oracle_jump",
+      "magnitude": 0.05
+    }
+  ]
+}

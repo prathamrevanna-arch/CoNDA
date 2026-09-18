@@ -67,12 +67,15 @@ CREATE TABLE IF NOT EXISTS assessments (
     window_start   INTEGER NOT NULL,
     window_end     INTEGER NOT NULL,
     grp            TEXT NOT NULL,
+    agent_a        TEXT NOT NULL,
+    agent_b        TEXT NOT NULL,
     risk_score     INTEGER NOT NULL,
     verdict        TEXT NOT NULL,
     signals        TEXT NOT NULL,
     counterfactual TEXT NOT NULL,
     evidence_hash  TEXT NOT NULL,
     computed_ms    REAL NOT NULL,
+    raw_json       TEXT NOT NULL,
     FOREIGN KEY (run_id) REFERENCES runs(run_id)
 );
 
@@ -93,9 +96,18 @@ CREATE TABLE IF NOT EXISTS cases (
 
 
 def initialize_db() -> None:
-    """Create tables if they do not already exist."""
+    """Create tables if they do not already exist, and ensure schema migrations."""
     with _connect() as conn:
         conn.executescript(_DDL)
+        # Check for missing columns if table pre-existed
+        cur = conn.execute("PRAGMA table_info(assessments)")
+        cols = {row["name"] for row in cur.fetchall()}
+        if "agent_a" not in cols:
+            conn.execute("ALTER TABLE assessments ADD COLUMN agent_a TEXT NOT NULL DEFAULT ''")
+        if "agent_b" not in cols:
+            conn.execute("ALTER TABLE assessments ADD COLUMN agent_b TEXT NOT NULL DEFAULT ''")
+        if "raw_json" not in cols:
+            conn.execute("ALTER TABLE assessments ADD COLUMN raw_json TEXT NOT NULL DEFAULT '{}'")
     logger.debug("DB initialized at %s", _db_path())
 
 
@@ -158,23 +170,34 @@ def get_run(run_id: str) -> Optional[dict]:
 
 def save_assessment(assessment: dict) -> int:
     """Persist a RiskAssessment dict; return the new rowid."""
+    grp = assessment.get("group", [])
+    agent_a = grp[0] if len(grp) > 0 else assessment.get("agent_a", "")
+    agent_b = grp[1] if len(grp) > 1 else assessment.get("agent_b", "")
+    raw_json = json.dumps(assessment)
+    signals_str = json.dumps(assessment.get("signals", {}))
+    cf_str = json.dumps(assessment.get("counterfactual", {}))
+
     with _connect() as conn:
         cur = conn.execute(
             "INSERT INTO assessments "
-            "(run_id, window_start, window_end, grp, risk_score, verdict, "
-            "signals, counterfactual, evidence_hash, computed_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(run_id, window_start, window_end, grp, agent_a, agent_b, "
+            " risk_score, verdict, signals, counterfactual, evidence_hash, "
+            " computed_ms, raw_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 assessment["run_id"],
                 assessment["window_start"],
                 assessment["window_end"],
-                json.dumps(assessment["group"]),
+                json.dumps(grp),
+                str(agent_a),
+                str(agent_b),
                 assessment["risk_score"],
                 assessment["verdict"],
-                json.dumps(assessment["signals"]),
-                json.dumps(assessment["counterfactual"]),
+                signals_str,
+                cf_str,
                 assessment["evidence_hash"],
-                assessment["computed_ms"],
+                assessment.get("computed_ms", 0.0),
+                raw_json,
             ),
         )
         return cur.lastrowid

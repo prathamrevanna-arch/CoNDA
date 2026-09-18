@@ -1,0 +1,75 @@
+{
+  "name": "cartel",
+  "ticks": 100,
+  "fee_bps": 30,
+  "initial_reserve_x": 1000.0,
+  "initial_reserve_y": 100000.0,
+  "oracle_start": 100.0,
+  "oracle_mu": 0.0,
+  "oracle_sigma": 0.002,
+  "agents": [
+    {
+      "agent_id": "cartel_1",
+      "agent_class": "explicit_cartel",
+      "params": {
+        "markup": 0.03,
+        "buy_threshold": 0.005,
+        "sell_threshold": 0.06,
+        "base_qty_y": 400.0,
+        "base_qty_x": 0.5,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "cartel_2",
+      "agent_class": "explicit_cartel",
+      "params": {
+        "markup": 0.03,
+        "buy_threshold": 0.005,
+        "sell_threshold": 0.06,
+        "base_qty_y": 400.0,
+        "base_qty_x": 0.5,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "cartel_3",
+      "agent_class": "explicit_cartel",
+      "params": {
+        "markup": 0.03,
+        "buy_threshold": 0.005,
+        "sell_threshold": 0.06,
+        "base_qty_y": 400.0,
+        "base_qty_x": 0.5,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    },
+    {
+      "agent_id": "cartel_4",
+      "agent_class": "explicit_cartel",
+      "params": {
+        "markup": 0.03,
+        "buy_threshold": 0.005,
+        "sell_threshold": 0.06,
+        "base_qty_y": 400.0,
+        "base_qty_x": 0.5,
+        "initial_capital": 50000.0,
+        "initial_inventory_x": 250.0,
+        "initial_inventory_y": 25000.0
+      }
+    }
+  ],
+  "shocks": [
+    {
+      "t": 40,
+      "type": "oracle_jump",
+      "magnitude": 0.05
+    }
+  ]
+}
