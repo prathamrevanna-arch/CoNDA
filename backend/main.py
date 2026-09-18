@@ -109,13 +109,17 @@ class OpenCaseRequest(BaseModel):
 
 class ChallengeRequest(BaseModel):
     """
-    Placeholder schema for Step 4.
     A valid challenge proves execution-policy compliance only —
     it does NOT prove innocence of tacit coordination.
     """
-    agent_id: str
-    policy_hash: str
-    signature: str
+    agent_id: Optional[str] = None
+    agent_address: Optional[str] = None
+    policy_commitment: Optional[str] = None
+    policy_hash: Optional[str] = None
+    policy_json: Optional[Any] = None
+    signature: Optional[str] = None
+    flagged_action: Optional[Any] = None
+    trace: Optional[Any] = None
 
 
 # ---------------------------------------------------------------------------
@@ -136,10 +140,11 @@ async def health() -> dict:
     """
     Health check.
 
-    chain=False until blockchain integration is implemented in Step 4.
+    chain=True if local Anvil is running and CaseRegistry is reachable, else False.
     detector="stub" until Member 2's real module is integrated.
     """
-    return {"ok": True, "chain": False, "detector": "stub"}
+    from backend.chain import is_chain_available
+    return {"ok": True, "chain": is_chain_available(), "detector": "stub"}
 
 
 @app.get("/scenarios", response_model=List[ScenarioItem])
@@ -239,10 +244,8 @@ async def cases_list(run_id: Optional[str] = None) -> list:
 @app.post("/case/open", status_code=201)
 async def case_open(body: OpenCaseRequest) -> dict:
     """
-    Manually open a local case for a run/group.
-
-    For Step 3 this is a local DB operation only.
-    Blockchain interaction (opened_tx) belongs to Step 4.
+    Open a case for a run/group.
+    Attempts on-chain openCase; if Anvil is unavailable, opened_tx remains None.
     """
     row = get_run(body.run_id)
     if row is None:
@@ -250,8 +253,18 @@ async def case_open(body: OpenCaseRequest) -> dict:
             status_code=404, detail=f"Run {body.run_id!r} not found"
         )
 
-    # Use the current tick as opened_at_tick
     opened_at_tick = row["current_tick"]
+
+    opened_tx = None
+    try:
+        from backend.chain import open_case as chain_open_case
+        opened_tx = chain_open_case(
+            evidence_hash=body.evidence_hash,
+            risk_score=body.risk_score,
+            group_ref=",".join(body.group),
+        )
+    except Exception as exc:
+        logger.warning("Blockchain open_case failed during /case/open: %s", exc)
 
     case = create_case(
         run_id=body.run_id,
@@ -259,6 +272,7 @@ async def case_open(body: OpenCaseRequest) -> dict:
         risk_score=body.risk_score,
         evidence_hash=body.evidence_hash,
         opened_at_tick=opened_at_tick,
+        opened_tx=opened_tx,
     )
 
     # Broadcast through the existing hub
@@ -270,29 +284,57 @@ async def case_open(body: OpenCaseRequest) -> dict:
 async def case_challenge(case_id: str, body: ChallengeRequest) -> JSONResponse:
     """
     Challenge a flagged case.
+    Verifies policy commitment and ECDSA signature.
+    If valid -> resolves CLEARED.
+    If invalid -> resolves ESCALATED.
 
-    IMPORTANT — Step 3 limitation:
-    Challenge verification requires ECDSA signature checking and
-    policy-commitment verification, which belong to Step 4
-    (backend/challenge.py, contracts/CaseRegistry.sol).
-
-    This endpoint intentionally returns 503 to signal that the feature
-    is not yet available.  It does NOT falsely return CLEARED.
-
-    Note on semantics: a valid challenge proves execution-policy compliance
-    only — it does NOT prove innocence of tacit coordination.
+    CRITICAL COMPLIANCE NOTE:
+    CLEARED means ONLY that the submitted action was verified as compliant with
+    the pre-committed execution policy. It does NOT prove absence of tacit coordination.
     """
+    from backend.db import get_case as db_get_case, update_case as db_update_case
+    from backend.challenge import verify_challenge
+    from backend.chain import submit_challenge as chain_submit_challenge, resolve_case as chain_resolve_case
+
+    case = db_get_case(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"Case {case_id!r} not found")
+
+    data = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+    v_result = verify_challenge(data)
+    verdict = v_result["status"]  # "CLEARED" or "ESCALATED"
+    explanation = v_result["explanation"]
+
+    challenge_tx = None
+    resolved_tx = None
+
+    try:
+        pc = body.policy_commitment or body.policy_hash or "0x" + "00" * 32
+        challenge_tx = chain_submit_challenge(case_id=case_id, policy_commitment=pc)
+        status_code = 2 if verdict == "CLEARED" else 3
+        resolved_tx = chain_resolve_case(case_id=case_id, status=status_code)
+    except Exception as exc:
+        logger.warning("Blockchain challenge/resolve failed: %s", exc)
+
+    db_update_case(
+        case_id,
+        status=verdict,
+        challenge_tx=challenge_tx,
+        resolved_tx=resolved_tx,
+    )
+
+    updated_case = db_get_case(case_id)
+    if updated_case:
+        await hub.broadcast({"type": "case", "payload": updated_case})
+
     return JSONResponse(
-        status_code=503,
+        status_code=200,
         content={
-            "detail": (
-                "Challenge verification is not yet implemented. "
-                "It requires Step 4 blockchain/ECDSA integration. "
-                "Note: a valid challenge proves execution-policy compliance only "
-                "— it does not prove innocence of tacit coordination."
-            ),
             "case_id": case_id,
-            "status": "pending_step4",
+            "status": verdict,
+            "explanation": explanation,
+            "challenge_tx": challenge_tx,
+            "resolved_tx": resolved_tx,
         },
     )
 

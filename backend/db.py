@@ -224,6 +224,7 @@ def create_case(
     risk_score: int,
     evidence_hash: str,
     opened_at_tick: int,
+    opened_tx: Optional[str] = None,
 ) -> dict:
     """Insert a new OPEN case and return its full dict."""
     case_id = str(uuid.uuid4())
@@ -232,13 +233,14 @@ def create_case(
             "INSERT INTO cases "
             "(case_id, run_id, grp, risk_score, evidence_hash, status, "
             " opened_tx, challenge_tx, resolved_tx, opened_at_tick) "
-            "VALUES (?, ?, ?, ?, ?, 'OPEN', NULL, NULL, NULL, ?)",
+            "VALUES (?, ?, ?, ?, ?, 'OPEN', ?, NULL, NULL, ?)",
             (
                 case_id,
                 run_id,
                 json.dumps(sorted(group)),
                 risk_score,
                 evidence_hash,
+                opened_tx,
                 opened_at_tick,
             ),
         )
@@ -249,11 +251,24 @@ def create_case(
         "risk_score":     risk_score,
         "evidence_hash":  evidence_hash,
         "status":         "OPEN",
-        "opened_tx":      None,
+        "opened_tx":      opened_tx,
         "challenge_tx":   None,
         "resolved_tx":    None,
         "opened_at_tick": opened_at_tick,
     }
+
+
+def get_case(case_id: str) -> Optional[dict]:
+    """Return a single case by case_id, or None."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cases WHERE case_id = ?", (case_id,)
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["group"] = json.loads(d.pop("grp"))
+    return d
 
 
 def update_case(case_id: str, **kwargs: Any) -> None:

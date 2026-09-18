@@ -346,27 +346,30 @@ class TestWebSocket:
 class TestChallenge:
 
     def test_challenge_not_implemented_before_step4(self):
-        """Challenge must not pretend to verify ECDSA/policy in Step 3."""
+        """Challenging a non-existent case must return 404."""
         payload = {
             "agent_id":    "A2",
             "policy_hash": "0x" + "de" * 32,
             "signature":   "0x" + "ca" * 64,
         }
         r = client.post("/case/fake-case-id/challenge", json=payload)
-        # Must NOT be 200 CLEARED; must signal unavailability
-        assert r.status_code == 503
+        assert r.status_code == 404
 
     def test_challenge_response_does_not_say_cleared(self):
+        """An invalid challenge must not claim CLEARED."""
+        run_id = str(uuid.uuid4())
+        _db_module.create_run(run_id, "default", 0)
+        case = _db_module.create_case(run_id, ["A2", "A3"], 85, "0x" + "aa" * 32, 12)
         payload = {
             "agent_id":    "A2",
             "policy_hash": "0x" + "de" * 32,
             "signature":   "0x" + "ca" * 64,
         }
-        r = client.post("/case/any-id/challenge", json=payload)
+        r = client.post(f"/case/{case['case_id']}/challenge", json=payload)
+        assert r.status_code == 200
         body = r.json()
-        # Response must not claim CLEARED
         assert body.get("status") != "CLEARED"
-        assert "step4" in str(body).lower() or "not yet" in str(body).lower() or "503" in str(r.status_code)
+        assert body.get("status") == "ESCALATED"
 
 
 # ===========================================================================

@@ -1,4 +1,4 @@
-﻿"""
+"""
 backend/orchestrator.py
 -----------------------
 Async orchestrator that drives a full CoNDA run.
@@ -160,17 +160,29 @@ async def _process_window(
             and not case_opened
             and not case_exists_for_run_group(run_id, assessment["group"])
         ):
+            opened_tx = None
+            try:
+                from backend.chain import open_case as chain_open_case
+                opened_tx = chain_open_case(
+                    evidence_hash=assessment["evidence_hash"],
+                    risk_score=assessment["risk_score"],
+                    group_ref=",".join(assessment["group"]),
+                )
+            except Exception as chain_err:
+                logger.warning("Blockchain open_case failed: %s", chain_err)
+
             case = create_case(
                 run_id=run_id,
                 group=assessment["group"],
                 risk_score=assessment["risk_score"],
                 evidence_hash=assessment["evidence_hash"],
                 opened_at_tick=current_tick,
+                opened_tx=opened_tx,
             )
             case_opened = True
             logger.info(
-                "Case %s opened run=%s tick=%d streak=%d",
-                case["case_id"], run_id, current_tick, high_streak,
+                "Case %s opened run=%s tick=%d streak=%d (tx=%s)",
+                case["case_id"], run_id, current_tick, high_streak, opened_tx,
             )
             await hub.broadcast({"type": "case", "payload": case})
 
