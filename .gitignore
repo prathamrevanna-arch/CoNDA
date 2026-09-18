@@ -8,3 +8,4 @@ runs/*
 !runs/competitive_seed42.jsonl
 !runs/cartel_seed42.jsonl
 !runs/legit_seed42.jsonl
+!runs/cartel_seed99.jsonl
