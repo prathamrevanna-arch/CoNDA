@@ -1,6 +1,10 @@
-@"
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
-"@ | Set-Content .gitignore
+
+# Ignore general simulation runs, but track required committed sample runs
+runs/*
+!runs/competitive_seed42.jsonl
+!runs/cartel_seed42.jsonl
+!runs/legit_seed42.jsonl
