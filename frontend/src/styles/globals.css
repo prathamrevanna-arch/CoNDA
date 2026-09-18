@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-navy: var(--navy);
+  --color-navy-card: var(--navy-card);
+  --color-navy-elevated: var(--navy-elevated);
+  --color-navy-border: var(--navy-border);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-violet: var(--violet);
+  --color-cyan: var(--cyan);
+  --color-verified: var(--verified);
+  --color-warn: var(--warn);
+  --color-risk: var(--risk);
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: dark;
+  --navy: #070b16;
+  --navy-card: #0e1424;
+  --navy-elevated: #131b2e;
+  --navy-border: rgba(140, 160, 200, 0.14);
+  --ink: #eef2fb;
+  --ink-muted: #9aa6c0;
+  --ink-faint: #5c6785;
+  --violet: #8b5cf6;
+  --cyan: #22d3ee;
+  --verified: #34d399;
+  --warn: #f59e0b;
+  --risk: #f43f5e;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background: var(--navy);
+  color: var(--ink);
+}
