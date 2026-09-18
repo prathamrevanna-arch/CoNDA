@@ -65,4 +65,4 @@ JSONL ticks → load.py → windows.py (100-tick rolling, stride 25)
                          score.py (public API + CLI)
 ```
 
-See [`CoNDA_detector_deep_dive.md`](C:\Users\bolla\.gemini\antigravity-ide\brain\6a9f12cf-71fa-4d89-ae2f-75428192bc5a\CoNDA_detector_deep_dive.md) for the full technical reference.
+See [`detector/CoNDA_detector_deep_dive.md`](detector/CoNDA_detector_deep_dive.md) for the full technical reference.
