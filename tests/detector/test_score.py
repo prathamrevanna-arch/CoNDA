@@ -177,10 +177,39 @@ def test_malformed_input_does_not_crash():
         {"run_id": "r1", "t": 10, "event": "quote", "agent_id": "A1", "price": float("inf")},
         {"run_id": "r1", "t": 11, "event": "quote", "agent_id": "A2", "price": -50.0},
     ]
-    # Must not crash
+    # 1. Must not crash
     res = score_window(malformed)
+    # 2. Returned verdict is LOW
     assert res["verdict"] == "LOW"
-    assert isinstance(res["risk_score"], int)
+    # 3. Returned risk_score is 0
+    assert res["risk_score"] == 0
+    # 4. Assessment contains the word 'error' in an existing note/explanation field
+    assert "error" in res["signals"]["counterfactual_gap"]["explanation"].lower()
+    assert "error" in res["signals"]["sync_under_shock"]["explanation"].lower()
+
+
+def test_malformed_inputs_comprehensive():
+    # Various malformed input variants: None, non-iterable, list of invalid types
+    cases = [
+        None,
+        "string_instead_of_list",
+        12345,
+        [None, "invalid_item"],
+        [{"not_a_valid_tick": True}],
+    ]
+    for case in cases:
+        # 1. Never raises
+        res = score_window(case)
+        # 2. Returned verdict is LOW
+        assert res["verdict"] == "LOW"
+        # 3. Returned risk_score is 0
+        assert res["risk_score"] == 0
+        # 4. Assessment contains the word 'error' in existing explanation field
+        explanations = [
+            s["explanation"] for s in res["signals"].values() if "explanation" in s
+        ]
+        assert len(explanations) > 0
+        assert any("error" in exp.lower() for exp in explanations)
 
 
 def test_all_agents_reacting_together_low_sync_risk():

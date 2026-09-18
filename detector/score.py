@@ -29,8 +29,8 @@ from detector.windows import Window, extract_agents, extract_run_id, slice_windo
 
 
 def _sanitize_tick(raw_tick: Any) -> Optional[Dict[str, Any]]:
-    """Ensure a tick is a valid dictionary without raising an exception."""
-    if isinstance(raw_tick, dict):
+    """Ensure a tick is a valid dictionary conforming to tick structure without raising."""
+    if isinstance(raw_tick, dict) and ("event" in raw_tick or "t" in raw_tick or "run_id" in raw_tick):
         return raw_tick
     return None
 
@@ -119,6 +119,49 @@ def _score_pair_in_window(
     }
 
 
+def _make_error_assessment(
+    run_id: str,
+    w_start: int,
+    w_end: int,
+    agents: List[str],
+    start_time: float,
+    error_msg: str,
+    cf_summary: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Return a schema-compliant LOW risk assessment containing an error note."""
+    elapsed_ms = round((time.perf_counter() - start_time) * 1000.0, 1)
+    error_signals = {
+        "counterfactual_gap": {
+            "value": 0.0,
+            "contribution": 0,
+            "explanation": error_msg,
+        },
+        "sync_under_shock": {
+            "value": 0.0,
+            "contribution": 0,
+            "explanation": error_msg,
+        },
+    }
+    if cf_summary is None:
+        cf_summary = {
+            "reference_price": 0.0,
+            "observed_price": 0.0,
+            "gap_pct": 0.0,
+        }
+    return {
+        "run_id": run_id,
+        "window_start": w_start,
+        "window_end": w_end,
+        "group": list(agents),
+        "risk_score": 0,
+        "verdict": "LOW",
+        "signals": error_signals,
+        "counterfactual": cf_summary,
+        "evidence_hash": _calculate_evidence_hash(error_signals),
+        "computed_ms": elapsed_ms,
+    }
+
+
 def score_window(
     ticks: List[Dict[str, Any]],
     group: Optional[Sequence[str]] = None,
@@ -140,76 +183,125 @@ def score_window(
     """
     start_time = time.perf_counter()
 
-    # Sanitize ticks
-    valid_ticks: List[Dict[str, Any]] = []
-    for t in ticks:
-        s = _sanitize_tick(t)
-        if s is not None:
-            valid_ticks.append(s)
+    try:
+        if ticks is None or not isinstance(ticks, Iterable):
+            return _make_error_assessment(
+                run_id="unknown_run",
+                w_start=0,
+                w_end=0,
+                agents=[],
+                start_time=start_time,
+                error_msg="Input error: Ticks must be an iterable sequence of dictionaries.",
+            )
 
-    run_id = extract_run_id(valid_ticks) if valid_ticks else "unknown_run"
-    agents = extract_agents(valid_ticks) if valid_ticks else []
+        # Sanitize ticks and detect malformed items
+        valid_ticks: List[Dict[str, Any]] = []
+        has_malformed_items = False
+        raw_count = 0
 
-    def _safe_int_t(tick_item: Optional[Dict[str, Any]], default_val: int) -> int:
-        if not tick_item or "t" not in tick_item:
-            return default_val
-        t_val = tick_item.get("t")
-        try:
-            f = float(t_val)
-            import math
-            if math.isnan(f) or math.isinf(f):
+        for t in ticks:
+            raw_count += 1
+            s = _sanitize_tick(t)
+            if s is not None:
+                valid_ticks.append(s)
+            else:
+                has_malformed_items = True
+
+        run_id = extract_run_id(valid_ticks) if valid_ticks else "unknown_run"
+        agents = extract_agents(valid_ticks) if valid_ticks else []
+
+        def _safe_int_t(tick_item: Optional[Dict[str, Any]], default_val: int) -> int:
+            if not tick_item or "t" not in tick_item:
                 return default_val
-            return int(f)
-        except (ValueError, TypeError):
-            return default_val
+            t_val = tick_item.get("t")
+            try:
+                f = float(t_val)
+                import math
+                if math.isnan(f) or math.isinf(f):
+                    return default_val
+                return int(f)
+            except (ValueError, TypeError):
+                return default_val
 
-    w_start = _safe_int_t(valid_ticks[0] if valid_ticks else None, 0)
-    w_end = _safe_int_t(valid_ticks[-1] if valid_ticks else None, len(valid_ticks))
+        w_start = _safe_int_t(valid_ticks[0] if valid_ticks else None, 0)
+        w_end = _safe_int_t(valid_ticks[-1] if valid_ticks else None, len(valid_ticks))
 
-    window = Window(
-        run_id=run_id,
-        window_start=w_start,
-        window_end=w_end,
-        ticks=valid_ticks,
-        agents=agents,
-        start_idx=0,
-        end_idx=max(0, len(valid_ticks) - 1),
-    )
+        # Malformed input detection: non-dict items present, or items present but none valid
+        if has_malformed_items or (raw_count > 0 and len(valid_ticks) == 0):
+            return _make_error_assessment(
+                run_id=run_id,
+                w_start=w_start,
+                w_end=w_end,
+                agents=agents,
+                start_time=start_time,
+                error_msg="Input error: Malformed or unparseable tick data encountered in window.",
+            )
 
-    cf_summary = compute_window_counterfactual(valid_ticks)
+        cf_summary = compute_window_counterfactual(valid_ticks)
 
-    # Case A: Specific group requested
-    if group is not None and len(group) == 2:
-        return _score_pair_in_window(window, (str(group[0]), str(group[1])), cf_summary)
+        window = Window(
+            run_id=run_id,
+            window_start=w_start,
+            window_end=w_end,
+            ticks=valid_ticks,
+            agents=agents,
+            start_idx=0,
+            end_idx=max(0, len(valid_ticks) - 1),
+        )
 
-    # Case B: Evaluate available candidate pairs
-    if len(agents) >= 2:
-        candidate_assessments: List[Dict[str, Any]] = []
-        for pair in itertools.combinations(sorted(agents), 2):
-            assessment = _score_pair_in_window(window, pair, cf_summary)
-            candidate_assessments.append(assessment)
+        # Case A: Specific group requested
+        if group is not None and len(group) == 2:
+            return _score_pair_in_window(window, (str(group[0]), str(group[1])), cf_summary)
 
-        # Select highest risk score; break ties deterministically by pair order
-        candidate_assessments.sort(key=lambda a: (-a["risk_score"], a["group"]))
-        return candidate_assessments[0]
+        # Case B: Evaluate available candidate pairs
+        if len(agents) >= 2:
+            candidate_assessments: List[Dict[str, Any]] = []
+            for pair in itertools.combinations(sorted(agents), 2):
+                assessment = _score_pair_in_window(window, pair, cf_summary)
+                candidate_assessments.append(assessment)
 
-    # Case C: Insufficient agents to form a pair (<2 agents or empty window)
-    empty_signals: Dict[str, Any] = {}
-    evidence_hash = _calculate_evidence_hash(empty_signals)
-    elapsed_ms = round((time.perf_counter() - start_time) * 1000.0, 1)
+            # Select highest risk score; break ties deterministically by pair order
+            candidate_assessments.sort(key=lambda a: (-a["risk_score"], a["group"]))
+            return candidate_assessments[0]
 
-    return {
-        "run_id": run_id,
-        "window_start": w_start,
-        "window_end": w_end,
-        "group": list(agents),
-        "risk_score": 0,
-        "verdict": "LOW",
-        "signals": empty_signals,
-        "counterfactual": cf_summary,
-        "evidence_hash": evidence_hash,
-        "computed_ms": elapsed_ms,
-    }
+        # Case C: Insufficient agents to form a pair (<2 agents or clean empty window)
+        empty_signals = {
+            "counterfactual_gap": {
+                "value": 0.0,
+                "contribution": 0,
+                "explanation": "Insufficient quote observations were available to evaluate price deviation.",
+            },
+            "sync_under_shock": {
+                "value": 0.0,
+                "contribution": 0,
+                "explanation": "No public shock occurred in this window, so no shock-synchronization evidence was observed.",
+            },
+        }
+        evidence_hash = _calculate_evidence_hash(empty_signals)
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000.0, 1)
+
+        return {
+            "run_id": run_id,
+            "window_start": w_start,
+            "window_end": w_end,
+            "group": list(agents),
+            "risk_score": 0,
+            "verdict": "LOW",
+            "signals": empty_signals,
+            "counterfactual": cf_summary,
+            "evidence_hash": evidence_hash,
+            "computed_ms": elapsed_ms,
+        }
+
+    except Exception as exc:
+        return _make_error_assessment(
+            run_id="unknown_run",
+            w_start=0,
+            w_end=0,
+            agents=[],
+            start_time=start_time,
+            error_msg=f"Input error: Unexpected exception during scoring: {exc}",
+        )
 
 
 def score_run(
@@ -234,10 +326,15 @@ def score_run(
     """
     # Sanitize tick stream
     def _sanitized_generator() -> Iterator[Dict[str, Any]]:
-        for raw in ticks:
-            s = _sanitize_tick(raw)
-            if s is not None:
-                yield s
+        if ticks is None:
+            return
+        try:
+            for raw in ticks:
+                s = _sanitize_tick(raw)
+                if s is not None:
+                    yield s
+        except Exception:
+            return
 
     # Partition into rolling windows using existing windows.py
     for window in slice_windows(_sanitized_generator(), window_size=window_size, stride=stride):
