@@ -1,25 +1,30 @@
-"""Tick-based Rolling Window Slicer for CoNDA Detector.
+"""Simulation-t-based Rolling Window Slicer for CoNDA Detector.
 
-Slices sequential market tick streams into overlapping windows of fixed tick count.
-Windows are based on tick records, NOT time elapsed.
+Slices sequential market tick streams into overlapping windows defined by
+UNIQUE SIMULATION t VALUES, not raw tick record counts.
+
+Each simulation timestep t may produce multiple MarketTick records
+(e.g. one quote per agent + a trade). All records sharing the same t are
+always kept together; no tick is ever split across a window boundary.
 """
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Iterator, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List
 
 
 @dataclass
 class Window:
-    """A sliding window of consecutive market tick records."""
+    """A sliding window of market tick records spanning a range of simulation t values."""
     run_id: str
     window_start: int
     window_end: int
     ticks: List[Dict[str, Any]]
     agents: List[str]
-    start_idx: int
-    end_idx: int
+    start_idx: int   # index into the unique-t list (first t in window)
+    end_idx: int     # index into the unique-t list (last  t in window)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert window metadata to a dictionary representation."""
@@ -58,73 +63,96 @@ def slice_windows(
     window_size: int = 100,
     stride: int = 25,
 ) -> Iterator[Window]:
-    """Slice a stream of ticks into overlapping tick-count based windows.
+    """Slice a tick stream into overlapping windows defined by unique simulation t values.
 
-    Rules:
-    - Default window size is 100 ticks.
-    - Default stride is 25 ticks (e.g. 0-99, 25-124, 50-149, ...).
-    - If total ticks < window_size but > 0, yields a single window of available ticks.
-    - If total ticks == 0, yields nothing safely without crashing.
-    - window_start and window_end use tick timestamp 't' if present, otherwise tick index.
+    Semantics (IMPORTANT):
+    - window_size = number of UNIQUE simulation t values per window (default: 100).
+    - stride      = number of unique t values to advance per step     (default: 25).
+    - ALL MarketTick records that share the same simulation t are
+      included together — no record is ever split across a boundary.
+    - window_start = first  simulation t selected in the window.
+    - window_end   = last   simulation t selected in the window.
+
+    Expected window count:
+      For N unique t values, window_size W, stride S:
+        windows = ceil((N - W) / S) + 1   if N >= W
+        windows = 1                         if 0 < N < W  (short-run fallback)
+        windows = 0                         if N == 0
+
+    Example — 400 unique t values (0..399), W=100, S=25:
+      starts at t-indices 0, 25, 50, ..., 300  -> 13 windows.
 
     Args:
-        ticks: An iterable of market tick dictionaries.
-        window_size: Number of tick records per window (default: 100).
-        stride: Step size between consecutive window starts (default: 25).
+        ticks: An iterable of market tick dictionaries (may contain multiple
+               records per simulation t).
+        window_size: Unique simulation t values per window (default: 100).
+        stride: Unique simulation t values to advance between windows (default: 25).
 
     Yields:
-        Window objects containing the slice metadata and tick records.
+        Window objects containing slice metadata and all tick records for the
+        selected simulation t range.
     """
     if window_size <= 0 or stride <= 0:
         raise ValueError("window_size and stride must be positive integers.")
 
+    # Materialise stream (needed for random-access grouping)
     tick_list: List[Dict[str, Any]] = list(ticks) if not isinstance(ticks, list) else ticks
-    total_ticks = len(tick_list)
 
-    if total_ticks == 0:
+    if not tick_list:
         return
 
-    # Fallback for short runs: produce one window with all available ticks
-    if total_ticks < window_size:
-        first_tick = tick_list[0]
-        last_tick = tick_list[-1]
-        w_start = int(first_tick.get("t", 0)) if "t" in first_tick else 0
-        w_end = int(last_tick.get("t", total_ticks - 1)) if "t" in last_tick else total_ticks - 1
+    # Group ticks by their simulation t, preserving stream order within each group.
+    t_groups: "OrderedDict[int, List[Dict[str, Any]]]" = OrderedDict()
+    for tick in tick_list:
+        raw_t = tick.get("t")
+        try:
+            t_val = int(float(raw_t))       # handles numpy float64, int, str
+        except (TypeError, ValueError):
+            t_val = 0
+        if t_val not in t_groups:
+            t_groups[t_val] = []
+        t_groups[t_val].append(tick)
+
+    unique_ts: List[int] = list(t_groups.keys())
+    total_unique = len(unique_ts)
+    run_id = extract_run_id(tick_list)
+
+    # Short-run fallback: fewer unique t values than window_size
+    if total_unique < window_size:
         yield Window(
-            run_id=extract_run_id(tick_list),
-            window_start=w_start,
-            window_end=w_end,
+            run_id=run_id,
+            window_start=unique_ts[0],
+            window_end=unique_ts[-1],
             ticks=tick_list,
             agents=extract_agents(tick_list),
             start_idx=0,
-            end_idx=total_ticks - 1,
+            end_idx=total_unique - 1,
         )
         return
 
-    # Standard rolling window slicing
-    for start_idx in range(0, total_ticks, stride):
-        end_idx = min(start_idx + window_size, total_ticks)
-        slice_ticks = tick_list[start_idx:end_idx]
+    # Standard rolling window over the ordered unique-t list
+    t_start_pos = 0
+    while t_start_pos < total_unique:
+        t_end_pos = min(t_start_pos + window_size, total_unique)
+        window_ts = unique_ts[t_start_pos:t_end_pos]
 
-        # Stop if the remaining slice is empty
-        if not slice_ticks:
-            break
-
-        first_tick = slice_ticks[0]
-        last_tick = slice_ticks[-1]
-        w_start = int(first_tick.get("t", start_idx)) if "t" in first_tick else start_idx
-        w_end = int(last_tick.get("t", end_idx - 1)) if "t" in last_tick else end_idx - 1
+        # Flatten all tick records for the selected t range (original order preserved)
+        window_ticks: List[Dict[str, Any]] = []
+        for t_val in window_ts:
+            window_ticks.extend(t_groups[t_val])
 
         yield Window(
-            run_id=extract_run_id(slice_ticks),
-            window_start=w_start,
-            window_end=w_end,
-            ticks=slice_ticks,
-            agents=extract_agents(slice_ticks),
-            start_idx=start_idx,
-            end_idx=end_idx - 1,
+            run_id=run_id,
+            window_start=window_ts[0],
+            window_end=window_ts[-1],
+            ticks=window_ticks,
+            agents=extract_agents(window_ticks),
+            start_idx=t_start_pos,
+            end_idx=t_end_pos - 1,
         )
 
-        # If we have reached or exceeded the end of ticks, don't generate duplicate tail windows
-        if end_idx >= total_ticks:
+        # If we have reached or exceeded the end of unique t values, do not generate tail windows
+        if t_end_pos >= total_unique:
             break
+
+        t_start_pos += stride

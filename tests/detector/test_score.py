@@ -7,25 +7,27 @@ from detector.score import _cli_main, score_run, score_window
 
 
 def _make_sample_ticks(n: int = 100, agents=("A1", "A2"), price: float = 104.3, ref_price: float = 100.0):
+    """Produce n unique simulation t-steps. Each t gets one tick per agent,
+    matching the real M1 stream pattern (multiple records per simulation t)."""
     ticks = []
     for i in range(n):
-        ag = agents[i % len(agents)]
-        ticks.append({
-            "run_id": "r_test_01",
-            "t": 100 + i,
-            "event": "quote",
-            "agent_id": ag,
-            "side": "ask",
-            "price": price,
-            "quantity": 5.0,
-            "pool": {
-                "reserve_x": 10000.0,
-                "reserve_y": 10000.0 * ref_price,
-                "fee_bps": 0,
-            },
-            "oracle_price": ref_price,
-            "shock": None,
-        })
+        for ag in agents:
+            ticks.append({
+                "run_id": "r_test_01",
+                "t": 100 + i,          # unique t value; all agents share the same t
+                "event": "quote",
+                "agent_id": ag,
+                "side": "ask",
+                "price": price,
+                "quantity": 5.0,
+                "pool": {
+                    "reserve_x": 10000.0,
+                    "reserve_y": 10000.0 * ref_price,
+                    "fee_bps": 0,
+                },
+                "oracle_price": ref_price,
+                "shock": None,
+            })
     return ticks
 
 
@@ -65,13 +67,13 @@ def test_score_run_accepts_iterable_and_schema():
 
 
 def test_rolling_windows_and_stride():
-    # 150 ticks: with window_size 100 and stride 25:
-    # 0-99 (start 100, end 199)
-    # 25-124 (start 125, end 224)
-    # 50-149 (start 150, end 249)
+    # 150 unique t values (t=100..249), window_size=100, stride=25:
+    # Window 0: t=[100, 199]  (t-indices 0..99)
+    # Window 1: t=[125, 224]  (t-indices 25..124)
+    # Window 2: t=[150, 249]  (t-indices 50..149)
+    # -> 3 windows, 1 pair (A1,A2) each -> 3 results
     ticks = _make_sample_ticks(150)
     results = list(score_run(ticks, window_size=100, stride=25))
-    # 3 windows, 1 pair each -> 3 results
     assert len(results) == 3
     assert results[0]["window_start"] == 100
     assert results[1]["window_start"] == 125
@@ -79,7 +81,8 @@ def test_rolling_windows_and_stride():
 
 
 def test_pair_enumeration_and_deterministic_order():
-    # 3 agents in 100 ticks -> exactly 3 pairs: (A1, A2), (A1, A3), (A2, A3)
+    # 100 unique t values, 3 agents -> 1 window (t-indices 0..99), 3 pairs
+    # Pairs must be alphabetically sorted: (A1,A2), (A1,A3), (A2,A3)
     ticks = _make_sample_ticks(100, agents=("A3", "A1", "A2"))
     results = list(score_run(ticks, window_size=100, stride=25))
     assert len(results) == 3
@@ -228,7 +231,7 @@ def test_all_agents_reacting_together_low_sync_risk():
 
 
 def test_latency_target_under_50ms():
-    # 6 agents in a 100-tick window (15 candidate pairs)
+    # 100 unique t values, 6 agents -> 1 window (t-indices 0..99), 15 candidate pairs
     agents = [f"A{i}" for i in range(6)]
     ticks = _make_sample_ticks(100, agents=agents)
 
@@ -236,7 +239,7 @@ def test_latency_target_under_50ms():
     assessments = list(score_run(ticks, window_size=100))
     elapsed_ms = (time.perf_counter() - start) * 1000.0
 
-    # 15 pairs evaluated
+    # 15 pairs evaluated (C(6,2) = 15)
     assert len(assessments) == 15
     # Full window evaluation for all 15 pairs must easily be under 50ms
     assert elapsed_ms < 50.0, f"Scoring 15 pairs took {elapsed_ms}ms, exceeded 50ms target"
