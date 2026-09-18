@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from detector.config import GAP_REFERENCE_SCALE
 from detector.counterfactual import compute_counterfactual_price, is_valid_number
 
 # Minimum observations required from each agent in the pair to assess pairwise persistence
@@ -110,8 +111,10 @@ def compute_counterfactual_gap(
     4. Compute robust summary statistics:
        - median normalized deviation (robust against one-off quote anomalies).
        - persistence ratio: fraction of observations where deviation > tolerance.
-    5. Formulate final bounded signal:
-       - value = min(1.0, max(0.0, median_gap * persistence_ratio)).
+    5. Formulate final bounded signal using tanh normalization:
+       - value = tanh(median_gap * persistence_ratio / GAP_REFERENCE_SCALE)
+       - This smoothly maps [0, ∞) -> [0, 1), with the reference scale anchoring
+         full signal strength at 5% persistent deviation.
 
     Args:
         ticks: Sequence of tick dictionaries in the current window.
@@ -205,10 +208,24 @@ def compute_counterfactual_gap(
     persistent_count = sum(1 for d in abs_deviations if d > tolerance)
     persistence_ratio = persistent_count / total_obs
 
-    # Signal value combines median deviation with persistence, bounded strictly in [0.0, 1.0]
-    # For example, persistent 4.3% gap across 100% of ticks yields value = 0.043
+    # Signal value: apply tanh normalization anchored at GAP_REFERENCE_SCALE.
+    # tanh(raw / scale) is smooth (no hard cliff), monotonically increasing, and
+    # strictly bounded in [0, 1) for all non-negative inputs.
+    #
+    # Properties at key thresholds (scale=0.05):
+    #   2.5% persistent gap  -> tanh(0.5) = 0.462  (half-strength)
+    #   5.0% persistent gap  -> tanh(1.0) = 0.762  (reference strength; NOT saturated)
+    #  10.0% persistent gap  -> tanh(2.0) = 0.964  (near-max but still graded)
+    #  78.0% persistent gap  -> tanh(15.6)= 1.000  (extreme; asymptote)
+    #
+    # This keeps moderate and extreme cartels distinguishable by score, unlike
+    # linear/clip normalization which saturates everything >=5% to exactly 1.0.
     raw_signal = med_dev * persistence_ratio
-    bounded_value = min(1.0, max(0.0, raw_signal))
+    if GAP_REFERENCE_SCALE > 0.0:
+        normalized = math.tanh(raw_signal / GAP_REFERENCE_SCALE)
+    else:
+        normalized = raw_signal
+    bounded_value = min(1.0, max(0.0, normalized))
 
     # Determine predominant side
     ask_count = sum(1 for s in sides if s == "ask")

@@ -38,27 +38,31 @@ def test_zero_deviation_and_identical_prices():
 
 def test_persistent_small_deviation():
     # Both agents quote 101.5 (1.5% above reference 100.0)
+    # With GAP_REFERENCE_SCALE=0.05: normalized_value = (0.015 * 1.0) / 0.05 = 0.30
     ticks = [
         _make_pool_tick("A1", 101.5) if i % 2 == 0 else _make_pool_tick("A2", 101.5)
         for i in range(40)
     ]
     res = compute_counterfactual_gap(ticks, ("A1", "A2"))
-    assert 0.01 <= res.value <= 0.02
+    assert math.isclose(res.value, 0.30, abs_tol=0.01)  # 1.5% / 5% reference scale = 0.30
     assert math.isclose(res.median_gap_pct, 1.5, abs_tol=0.1)
     assert res.persistence_ratio == 1.0
 
 
 def test_persistent_large_deviation():
     # Both agents quote 115.0 (15% above reference 100.0)
+    # With GAP_REFERENCE_SCALE=0.05: tanh(0.15/0.05) = tanh(3) ≈ 0.9951 (near-max, NOT exactly 1.0)
+    # tanh asymptotes to 1.0 — this is intentional: large gaps are near-max but still graded.
     ticks = [
         _make_pool_tick("A1", 115.0) if i % 2 == 0 else _make_pool_tick("A2", 115.0)
         for i in range(50)
     ]
     res = compute_counterfactual_gap(ticks, ("A1", "A2"))
-    # Value should reflect the high persistent gap (~0.15)
-    assert 0.14 <= res.value <= 0.16
+    assert res.value > 0.99        # tanh(3) = 0.9951 — near max
+    assert res.value < 1.0         # tanh never reaches exactly 1.0 (asymptote) — signal is graded
     assert math.isclose(res.median_gap_pct, 15.0, abs_tol=0.1)
     assert res.persistence_ratio == 1.0
+
 
 
 def test_one_outlier_should_not_dominate():
