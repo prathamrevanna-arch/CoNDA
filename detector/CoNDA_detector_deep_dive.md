@@ -221,7 +221,7 @@ Window 3:  ticks[50..149]   (t=150 to t=249)
 ### 3.3 `counterfactual.py`
 
 **File**: [`detector/counterfactual.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/counterfactual.py)  
-**Role**: Answers "what price *should* a rational, uncoordinated agent quote right now?"
+**Role**: Computes a closed-form competitive reference price benchmark for trading agents operating against an AMM pool and oracle.
 
 This is the mathematical heart of the system. It produces the **reference price** that every other signal is measured against.
 
@@ -294,7 +294,7 @@ This is attached to the output for human/dashboard review — it's **not** direc
 ### 3.4 `signals/gap.py`
 
 **File**: [`detector/signals/gap.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/signals/gap.py)  
-**Role**: Measures whether a specific agent pair is persistently pricing above the competitive reference.
+**Role**: Measures whether a specific agent pair persistently deviates from the competitive reference price (evaluating absolute relative deviation, while also recording signed deviation for diagnostic reporting).
 
 #### The intuition
 
@@ -317,20 +317,24 @@ If agent A2 and A3 are both consistently quoting at 104.5 while the AMM + oracle
 5. Compute:
    - median_gap_pct     = median(abs_deviations) × 100
    - persistence_ratio  = fraction of obs where deviation > 1% (tolerance)
-6. Signal value = min(1.0, (median_gap * persistence_ratio) / GAP_REFERENCE_SCALE)
-   - GAP_REFERENCE_SCALE = 0.05 (from config.py) — 5% deviation = full-strength signal (1.0)
-   - 2.5% gap → value = 0.5; 10%+ gap → value = 1.0 (capped)
+6. Signal value = min(1.0, tanh((median_gap * persistence_ratio) / GAP_REFERENCE_SCALE))
+   - GAP_REFERENCE_SCALE = 0.05 (from config.py) — 5% persistent deviation anchors reference strength
+   - Normalization uses hyperbolic tangent (tanh) to produce a smooth, graded curve without saturation:
+     * 2.5% persistent gap (at 100% persistence) → tanh(0.5) ≈ 0.462
+     * 5.0% persistent gap (at 100% persistence) → tanh(1.0) ≈ 0.762 (reference strength; NOT saturated)
+     * 10.0% persistent gap (at 100% persistence) → tanh(2.0) ≈ 0.964
+     * 78.0% persistent gap (at 100% persistence) → tanh(15.6) ≈ 1.000 (extreme cartel asymptote)
 ```
 
-**Why multiply median × persistence, then normalize?**
+**Why multiply median × persistence, then normalize with tanh?**
 
 Step 1 — combine: outlier vs persistent cartel distinction:
 - Outlier (50% deviation, 2% persistence): `0.50 * 0.02 = 0.01`
 - Persistent cartel (5% deviation, 100% persistence): `0.05 * 1.0 = 0.05`
 
-Step 2 — normalize by reference scale so realistic gaps register:
-- Without normalization: 5% gap → value=0.05, contributes only 3/100 points (invisible)
-- With normalization: 5% gap → value=1.0, contributes 60/100 points (dominant)
+Step 2 — normalize with tanh so realistic gaps register while extreme gaps remain distinguishable:
+- Without normalization: 5% gap → raw=0.05, contributes only 3/100 points (invisible)
+- With tanh normalization: 5% gap → value ≈ 0.762, contributes 46/100 points (HIGH tier when paired with sync), while an extreme cartel (78%) yields ~1.0, keeping scores graded rather than binary.
 
 
 #### `GapSignalResult` fields
@@ -559,7 +563,7 @@ Flow:
 
 #### `_make_error_assessment()` — malformed input safety
 
-If ANYTHING goes wrong (malformed ticks, exceptions, bad types), the system never raises. Instead it returns:
+In `score_window()`, if malformed ticks, unparseable inputs, or unexpected exceptions are encountered, the system never raises; instead it returns a schema-compliant LOW assessment with `"error"` noted in the explanation. (In `score_run()`, malformed stream items are safely skipped by `_sanitized_generator()` so that window slicing and assessment of valid ticks continue uninterrupted).
 
 ```json
 {
@@ -639,18 +643,18 @@ Every assessment — whether from `score_window()` or `score_run()` — returns 
   "window_start": 100,
   "window_end": 224,
   "group": ["A2", "A3"],
-  "risk_score": 74,
+  "risk_score": 78,
   "verdict": "HIGH",
   "signals": {
     "counterfactual_gap": {
-      "value": 0.0387,
-      "contribution": 44,
-      "explanation": "Observed quotes were 4.1% above the competitive reference..."
+      "value": 0.7617,
+      "contribution": 46,
+      "explanation": "Observed quotes were 5.1% above the competitive reference (105.4 vs 100.3) with the deviation persisting across 100% of comparable observations."
     },
     "sync_under_shock": {
-      "value": 0.7500,
-      "contribution": 30,
-      "explanation": "After the shock, the pair re-quoted within 1 tick of each other..."
+      "value": 0.8095,
+      "contribution": 32,
+      "explanation": "After the shock, the pair re-quoted within 1 tick of each other, compared with an 18-tick median baseline difference among other reacting pairs."
     }
   },
   "counterfactual": {
@@ -678,7 +682,7 @@ Four fixtures are generated. All scores below are **measured live** from `detect
 | Fixture | A2/A3 price gap | A2/A3 score | Verdict | Target |
 |---------|----------------|-------------|---------|--------|
 | `run_competitive.jsonl` | n/a (no cartel pair) | — | — | max ≤ 35 ✅ |
-| `run_cartel.jsonl` | **~5% above ref** (realistic) | **92** | HIGH | ≥ 70 ✅ |
+| `run_cartel.jsonl` | **~5% above ref** (realistic) | **78** | HIGH | ≥ 70 ✅ |
 | `run_cartel_extreme.jsonl` | **~78% above ref** (sanity check) | **92** | HIGH | ≥ 70 ✅ |
 | `run_legitimate_coordination.jsonl` | ~0% (fair pricing) | — | — | max ≤ 45 ✅ |
 
@@ -693,9 +697,9 @@ Four fixtures are generated. All scores below are **measured live** from `detect
 
 ---
 
-### `run_cartel.jsonl` — A2/A3 measured score: **92 (HIGH)**  ← PRIMARY DEMO FIXTURE
+### `run_cartel.jsonl` — A2/A3 measured score: **78 (HIGH)**  ← PRIMARY DEMO FIXTURE
 
-This is the realistic hard case. A 5% gap is at the lower bound of what tacit-collusion literature documents (3–15% supracompetitive price elevation).
+This is the realistic hard case: a subtle ~5% price elevation above competitive reference that exercises the detector's sensitivity without relying on an unrealistically obvious price jump.
 
 **Prices (actual code values in `generate_fixtures.py`):**
 
@@ -713,21 +717,23 @@ This is the realistic hard case. A 5% gap is at the lower bound of what tacit-co
 gap signal:  median_frac = 0.0505  (5.05%)
              persistence  = 1.0    (100% of quotes exceed 1% tolerance)
              raw = 0.0505 * 1.0 = 0.0505
-             normalized = 0.0505 / GAP_REFERENCE_SCALE(0.05) = 1.01 → capped at 1.0
-             gap_value = 1.0
+             normalized = tanh(0.0505 / GAP_REFERENCE_SCALE(0.05)) = tanh(1.01) ≈ 0.7658 (empirically 0.7617 across window)
+             gap_value ≈ 0.7617
 
 sync signal: A2 reacts at t=152 (delay 2), A3 at t=153 (delay 3) → D_pair = 1 tick
              A1 at t=170 (delay 20), A4 at t=176 (delay 26) → baseline ~18-tick median
-             sync_value = (18-1)/(18+3) = 17/21 ≈ 0.81
+             sync_value = (18-1)/(18+3) = 17/21 ≈ 0.8095
 
-risk_score = round((1.0 × 0.60 + 0.81 × 0.40) × 100) = round(92.4) = 92 → HIGH
+risk_score = round((0.7617 × 0.60 + 0.8095 × 0.40) × 100) = round(78.08) = 78 → HIGH
+(contributions: gap=46, sync=32; 46 + 32 = 78)
 ```
 
-> **Why GAP_REFERENCE_SCALE is needed:** Without normalization, a 5% gap produces `gap_value = 0.05`.
+> **Why GAP_REFERENCE_SCALE is needed with tanh:** Without normalization, a 5% gap produces `raw = 0.05`.
 > With weights gap=0.60, sync=0.40, that contributes only 3 points — far too small to reach HIGH even
 > with perfect sync. A weights-only fix is mathematically impossible (the constraint equations for
 > "competitive stays LOW" and "cartel reaches HIGH" are contradictory). The scale constant
-> `GAP_REFERENCE_SCALE = 0.05` (in `config.py`) normalizes the dynamic range: 5% gap → 1.0, 2.5% → 0.5.
+> `GAP_REFERENCE_SCALE = 0.05` (in `config.py`) normalizes the dynamic range smoothly via tanh:
+> 5% gap → ~0.762 (NOT saturated), 2.5% → ~0.462, while extreme gaps (78%) yield ~1.0.
 
 ---
 
@@ -740,7 +746,7 @@ Preserves the original pre-normalization prices for regression testing. **Do not
 | A2 | 178.50 / 169.10 | ~78% above reference |
 | A3 | 178.60 / 169.20 | ~78% above reference |
 
-Score is also 92 because 78% > 5% (reference scale), so the gap value is clamped to 1.0, same as the realistic case.
+Score is 92 because 78% persistent deviation reaches the upper asymptote of the tanh curve: `tanh(0.78 / 0.05) ≈ 1.0`, yielding `round((1.0 × 0.60 + 0.8095 × 0.40) × 100) = 92`. This confirms the detector provides a graded response distinguishing moderate cartels (78) from extreme cartels (92).
 
 ---
 
@@ -843,7 +849,7 @@ signals_block = {
 
 ### 8.2 Implementing `punishment.py` and `benefit.py`
 
-These are the two signals currently planned but not yet implemented (they return `value=None` so they are silently excluded from aggregation).
+These are two planned future signals that are not yet implemented in the current repository:
 
 - **`punishment.py`**: Should detect if one agent "punishes" another for defecting from the collusive price — e.g., suddenly undercuts the defector aggressively. Inputs: agent sequences, price histories.
 - **`benefit.py`**: Should quantify whether the cartel pair has a measurably higher profit/PnL than expected from fair competition. Requires `pnl` field from ticks.
@@ -916,11 +922,11 @@ python -m detector.score fixtures/run_legitimate_coordination.jsonl  # max ≤ 4
 | [`detector/load.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/load.py) | 106 | JSONL ingestion, malformed-input filtering |
 | [`detector/windows.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/windows.py) | 131 | Rolling window slicer (100 ticks, stride 25) |
 | [`detector/counterfactual.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/counterfactual.py) | 283 | AMM reference price engine |
-| [`detector/signals/gap.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/signals/gap.py) | 236 | Counterfactual gap signal |
+| [`detector/signals/gap.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/signals/gap.py) | 253 | Counterfactual gap signal |
 | [`detector/signals/sync.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/signals/sync.py) | 279 | Sync under shock signal |
 | [`detector/aggregate.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/aggregate.py) | 262 | Weighted score combiner, Hamilton-Hare allocation |
 | [`detector/explain.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/explain.py) | 200 | Non-accusatory text explanations |
-| [`detector/config.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/config.py) | 31 | All weights, thresholds, window params |
+| [`detector/config.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/config.py) | 55 | All weights, thresholds, window params |
 | [`detector/score.py`](file:///c:/Users/bolla/CoNDA/CoNDA/detector/score.py) | 403 | Public API + CLI, orchestrates everything |
 | [`generate_fixtures.py`](file:///c:/Users/bolla/CoNDA/CoNDA/generate_fixtures.py) | 242 | Synthetic test scenario generator |
 

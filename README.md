@@ -24,7 +24,7 @@ Scores agent pairs **0–100** for suspected tacit collusion based on two behavi
 | Fixture | Description | Top Pair | Score | Verdict | Target |
 |---------|-------------|----------|-------|---------|--------|
 | `run_competitive.jsonl` | 4 agents, staggered reaction times, prices at reference | A1/A4 | **24** | LOW | ≤ 35 ✅ |
-| `run_cartel.jsonl` | A2/A3 persistently **~5% above reference**, react within 1 tick vs. 18-tick baseline | A2/A3 | **92** | HIGH | ≥ 70 ✅ |
+| `run_cartel.jsonl` | A2/A3 persistently **~5% above reference**, react within 1 tick vs. 18-tick baseline | A2/A3 | **78** | HIGH | ≥ 70 ✅ |
 | `run_cartel_extreme.jsonl` | A2/A3 at **~78% above reference** — easy sanity-check case | A2/A3 | **92** | HIGH | ≥ 70 ✅ |
 | `run_legitimate_coordination.jsonl` | All agents react simultaneously (market-wide) but at fair prices | A1/A2 | **8** | LOW | ≤ 45 ✅ |
 
