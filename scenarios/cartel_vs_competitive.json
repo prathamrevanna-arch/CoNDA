@@ -63,7 +63,7 @@
   ],
   "shocks": [
     {
-      "t": 180,
+      "t": 150,
       "type": "oracle_jump",
       "magnitude": 0.05
     }

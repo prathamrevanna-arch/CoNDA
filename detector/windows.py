@@ -58,18 +58,19 @@ def slice_windows(
     window_size: int = 100,
     stride: int = 25,
 ) -> Iterator[Window]:
-    """Slice a stream of ticks into overlapping tick-count based windows.
+    """Slice a stream of ticks into overlapping simulation-t based windows.
 
     Rules:
-    - Default window size is 100 ticks.
-    - Default stride is 25 ticks (e.g. 0-99, 25-124, 50-149, ...).
-    - If total ticks < window_size but > 0, yields a single window of available ticks.
+    - Default window size is 100 unique simulation t values.
+    - Default stride is 25 unique simulation t values (e.g. 0-99, 25-124, 50-149, ...).
+    - Preserves ALL records sharing the same simulation t.
+    - If total unique t < window_size but > 0, yields a single window of available ticks.
     - If total ticks == 0, yields nothing safely without crashing.
     - window_start and window_end use tick timestamp 't' if present, otherwise tick index.
 
     Args:
         ticks: An iterable of market tick dictionaries.
-        window_size: Number of tick records per window (default: 100).
+        window_size: Number of unique simulation t values per window (default: 100).
         stride: Step size between consecutive window starts (default: 25).
 
     Yields:
@@ -84,8 +85,19 @@ def slice_windows(
     if total_ticks == 0:
         return
 
+    # Group records by unique simulation t, preserving chronological order
+    t_groups: Dict[int, List[Dict[str, Any]]] = {}
+    for idx, tick in enumerate(tick_list):
+        t_val = int(float(tick.get("t", idx))) if "t" in tick and tick.get("t") is not None else idx
+        if t_val not in t_groups:
+            t_groups[t_val] = []
+        t_groups[t_val].append(tick)
+
+    unique_ts = sorted(t_groups.keys())
+    total_unique = len(unique_ts)
+
     # Fallback for short runs: produce one window with all available ticks
-    if total_ticks < window_size:
+    if total_unique < window_size:
         first_tick = tick_list[0]
         last_tick = tick_list[-1]
         w_start = int(first_tick.get("t", 0)) if "t" in first_tick else 0
@@ -101,19 +113,20 @@ def slice_windows(
         )
         return
 
-    # Standard rolling window slicing
-    for start_idx in range(0, total_ticks, stride):
-        end_idx = min(start_idx + window_size, total_ticks)
-        slice_ticks = tick_list[start_idx:end_idx]
+    # Standard rolling window slicing over unique simulation t values
+    for start_idx in range(0, total_unique, stride):
+        end_idx = min(start_idx + window_size, total_unique)
+        window_ts = unique_ts[start_idx:end_idx]
 
-        # Stop if the remaining slice is empty
-        if not slice_ticks:
+        if not window_ts:
             break
 
-        first_tick = slice_ticks[0]
-        last_tick = slice_ticks[-1]
-        w_start = int(first_tick.get("t", start_idx)) if "t" in first_tick else start_idx
-        w_end = int(last_tick.get("t", end_idx - 1)) if "t" in last_tick else end_idx - 1
+        slice_ticks: List[Dict[str, Any]] = []
+        for t_val in window_ts:
+            slice_ticks.extend(t_groups[t_val])
+
+        w_start = window_ts[0]
+        w_end = window_ts[-1]
 
         yield Window(
             run_id=extract_run_id(slice_ticks),
@@ -126,5 +139,5 @@ def slice_windows(
         )
 
         # If we have reached or exceeded the end of ticks, don't generate duplicate tail windows
-        if end_idx >= total_ticks:
+        if end_idx >= total_unique:
             break
