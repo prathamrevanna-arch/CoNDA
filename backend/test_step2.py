@@ -432,7 +432,7 @@ async def test_auto_case_created_after_three_consecutive_high(fresh_run_id, mock
 
 @pytest.mark.asyncio
 async def test_streak_resets_on_low_score(fresh_run_id, mock_hub):
-    """Assessments: LOW, HIGH, HIGH → streak is only 2 for the group → no case."""
+    """Assessments: LOW, HIGH, HIGH → qualifying HIGH opens case, second HIGH does not duplicate."""
     run_id = fresh_run_id
     create_run(run_id, "default", 0)
 
@@ -451,9 +451,10 @@ async def test_streak_resets_on_low_score(fresh_run_id, mock_hub):
         )
 
     group_key = tuple(sorted(group))
-    # Only 2 consecutive HIGH windows after the LOW reset → no case
+    # A qualifying HIGH assessment opens 1 case; subsequent HIGH does not create duplicate
     cases = list_cases(run_id)
-    assert len(cases) == 0
+    assert len(cases) == 1
+    assert cases[0]["risk_score"] == 80
     assert streaks.get(group_key, 0) == 2
 
 

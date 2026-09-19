@@ -332,12 +332,12 @@ def list_cases(run_id: Optional[str] = None) -> list:
 
 
 def case_exists_for_run_group(run_id: str, group: list) -> bool:
-    """True if an OPEN case already exists for this run + agent group."""
+    """True if a case already exists for this run + agent group."""
     grp_json = json.dumps(sorted(group))
     with _connect() as conn:
         row = conn.execute(
             "SELECT 1 FROM cases "
-            "WHERE run_id = ? AND grp = ? AND status = 'OPEN'",
+            "WHERE run_id = ? AND grp = ?",
             (run_id, grp_json),
         ).fetchone()
     return row is not None

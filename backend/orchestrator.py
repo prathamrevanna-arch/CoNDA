@@ -146,6 +146,8 @@ async def _run_pipeline(run_id: str, scenario: str, seed: int) -> None:
             streaks, seen_windows = await _process_assessment(
                 run_id, assessment, streaks, seen_windows
             )
+            if getattr(hub, "client_count", 0) > 0:
+                await asyncio.sleep(0.03)
 
     except Exception as exc:
         logger.exception("Fatal error in run %s: %s", run_id, exc)
@@ -246,16 +248,16 @@ async def _process_assessment(
 
     # Update per-group streak counter.
     score = assessment.get("risk_score", 0)
+    verdict = assessment.get("verdict", "")
     if score >= CASE_THRESHOLD:
         streaks[group_key] = streaks.get(group_key, 0) + 1
     else:
         streaks[group_key] = 0
 
-    # Case rule: 3 consecutive HIGH windows for this group → open a case.
-    if (
-        streaks.get(group_key, 0) >= CONSECUTIVE_WINDOWS
-        and not case_exists_for_run_group(run_id, list(group_key))
-    ):
+    # Case rule: a qualifying HIGH assessment opens a case if one does not exist
+    # yet for this run + group. Prevents duplicate cases for the same group.
+    is_qualifying = verdict == "HIGH" or score >= CASE_THRESHOLD
+    if is_qualifying and not case_exists_for_run_group(run_id, list(group_key)):
         local_id = str(uuid.uuid4())
         opened_tx = None
         try:
@@ -278,12 +280,9 @@ async def _process_assessment(
             opened_tx=opened_tx,
             case_id=local_id,
         )
-        # Reset streak after case opened so further highs don't open another.
-        streaks[group_key] = 0
         logger.info(
-            "Case %s opened run=%s window_start=%d streak=%d (tx=%s)",
-            case["case_id"], run_id, window_start,
-            CONSECUTIVE_WINDOWS, opened_tx,
+            "Case %s opened run=%s window_start=%d score=%d (tx=%s)",
+            case["case_id"], run_id, window_start, score, opened_tx,
         )
         await hub.broadcast({"type": "case", "payload": case})
 

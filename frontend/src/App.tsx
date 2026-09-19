@@ -1,92 +1,123 @@
-import { useMemo, useState } from "react"
-import { AgentTable } from "@/components/AgentTable"
-import { CasePanel } from "@/components/CasePanel"
-import { DashboardHeader } from "@/components/DashboardHeader"
-import { Panel } from "@/components/Panel"
-import { PriceChart } from "@/components/PriceChart"
-import { RiskGauge } from "@/components/RiskGauge"
-import { ScenarioSelector } from "@/components/ScenarioSelector"
-import { SignalBreakdown } from "@/components/SignalBreakdown"
-import { useLiveSeries } from "@/hooks/useLiveSeries"
-import { AGENTS, CASES, generateSeries, SCENARIOS, SHOCK_EVENTS, SIGNALS } from "@/mocks/data"
-import type { Case } from "@/types"
+import { Header } from "./components/Header";
+import { AgentNetwork } from "./components/AgentNetwork";
+import { MarketChart } from "./components/MarketChart";
+import { DetectorPanel } from "./components/DetectorPanel";
+import { CaseRegistry } from "./components/CaseRegistry";
+import { BlockchainAudit } from "./components/BlockchainAudit";
+import { useCoNDALive } from "./hooks/useCoNDALive";
+import { AlertCircle } from "lucide-react";
 
 export default function App() {
-  const [scenarioId, setScenarioId] = useState(SCENARIOS[0].id)
-  const [running, setRunning] = useState(true)
-  const [runId, setRunId] = useState("RUN-8F42A1")
-  const { series, setSeries } = useLiveSeries(running)
-  const [cases, setCases] = useState<Case[]>(CASES)
-
-  const scenario = useMemo(() => SCENARIOS.find((s) => s.id === scenarioId)!, [scenarioId])
-
-  function handleStart() {
-    setSeries(generateSeries(60, Math.floor(Math.random() * 1e9)))
-    setRunId(`RUN-${Math.random().toString(16).slice(2, 8).toUpperCase()}`)
-    setRunning(true)
-  }
-
-  function handleSubmitChallenge(id: string) {
-    setCases((prev) =>
-      prev.map((c) =>
-        c.id === id && c.status === "OPEN"
-          ? {
-              ...c,
-              status: "CHALLENGED",
-              challengeTx: "0x" + Math.random().toString(16).slice(2).padEnd(64, "0").slice(0, 64),
-            }
-          : c,
-      ),
-    )
-  }
+  const {
+    health,
+    isApiOnline,
+    wsStatus,
+    scenarios,
+    selectedScenario,
+    setSelectedScenario,
+    runId,
+    simulationState,
+    currentTick,
+    totalTicks,
+    agents,
+    priceHistory,
+    recentEvents,
+    pool,
+    latestRisk,
+    riskHistory,
+    cases,
+    errorMessage,
+    startSimulation,
+    submitChallenge,
+  } = useCoNDALive();
 
   return (
-    <main className="min-h-screen bg-navy text-ink">
-      <DashboardHeader scenarioName={scenario.name} connected={running} runId={runId} />
+    <div className="min-h-screen bg-[var(--navy)] text-[var(--ink)] flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
+      {/* Top Header */}
+      <Header
+        health={health}
+        isApiOnline={isApiOnline}
+        wsStatus={wsStatus}
+        scenarios={scenarios}
+        selectedScenario={selectedScenario}
+        onSelectScenario={setSelectedScenario}
+        onStartSimulation={() => startSimulation()}
+        simulationState={simulationState}
+        currentTick={currentTick}
+        totalTicks={totalTicks}
+        runId={runId}
+      />
 
-      <div className="mx-auto grid max-w-[1600px] grid-cols-12 gap-4 p-4">
-        <div className="col-span-3 flex flex-col gap-4">
-          <Panel title="Coordination Risk" subtitle="Aggregate detector score">
-            <RiskGauge value={87} />
-            <p className="mt-3 text-center text-xs leading-snug text-ink-muted">
-              Coordination Risk: 87/100 — evidence of coordinated behavior, contestable by challenge.
-            </p>
-          </Panel>
+      {/* Error or Disconnected Alert Banner */}
+      {!isApiOnline && (
+        <div className="bg-rose-950/80 border-b border-rose-600/50 px-6 py-2.5 flex items-center justify-between text-xs font-mono text-rose-200">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>
+              <strong>Backend Disconnected:</strong> Cannot reach FastAPI at http://127.0.0.1:8000. Ensure the backend service is running.
+            </span>
+          </div>
+          <span className="text-[11px] text-rose-300">Retrying connection...</span>
+        </div>
+      )}
 
-          <Panel title="Scenario" subtitle="Simulated DeFi market">
-            <ScenarioSelector
-              scenarios={SCENARIOS}
-              selectedId={scenarioId}
-              onSelect={setScenarioId}
-              onStart={handleStart}
-              running={running}
+      {errorMessage && (
+        <div className="bg-amber-950/80 border-b border-amber-600/50 px-6 py-2.5 flex items-center gap-2 text-xs font-mono text-amber-200">
+          <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>{errorMessage}</span>
+        </div>
+      )}
+
+      {/* Main Dashboard Workspace */}
+      <main className="flex-1 p-5 md:p-6 space-y-6 max-w-[1720px] w-full mx-auto">
+        {/* Top Grid: Left (Agents & Market) + Right (Detector) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Left Column (8 cols): Autonomous Agents & Market AMM */}
+          <div className="lg:col-span-7 xl:col-span-8 space-y-6">
+            <AgentNetwork agents={agents} latestRisk={latestRisk} />
+            <MarketChart
+              priceHistory={priceHistory}
+              pool={pool}
+              recentEvents={recentEvents}
             />
-          </Panel>
+          </div>
+
+          {/* Right Column (5 cols): Detector Engine & Cryptographic Proof */}
+          <div className="lg:col-span-5 xl:col-span-4">
+            <div className="sticky top-24">
+              <DetectorPanel latestRisk={latestRisk} riskHistory={riskHistory} />
+            </div>
+          </div>
         </div>
 
-        <div className="col-span-6 flex flex-col gap-4">
-          <Panel
-            title="Observed vs Competitive Reference Price"
-            subtitle="Mid-price divergence with shock-event markers"
-          >
-            <PriceChart data={series} shocks={SHOCK_EVENTS} />
-          </Panel>
+        {/* Bottom Grid: Cases & Blockchain Audit Trail */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-7 xl:col-span-8">
+            <CaseRegistry
+              cases={cases}
+              onSubmitChallenge={submitChallenge}
+            />
+          </div>
 
-          <Panel title="Agent Activity" subtitle={`${AGENTS.length} agents in current run`}>
-            <AgentTable agents={AGENTS} />
-          </Panel>
+          <div className="lg:col-span-5 xl:col-span-4">
+            <BlockchainAudit health={health} cases={cases} />
+          </div>
         </div>
+      </main>
 
-        <div className="col-span-3 flex flex-col gap-4">
-          <Panel title="Signal Contribution" subtitle="Why the score is what it is">
-            <SignalBreakdown signals={SIGNALS} />
-          </Panel>
-
-          <Panel title="Case Lifecycle" subtitle="Contestable evidence records">
-            <CasePanel cases={cases} onSubmitChallenge={handleSubmitChallenge} />
-          </Panel>
+      {/* Footer */}
+      <footer className="border-t border-[var(--navy-border)] px-6 py-4 text-xs font-mono text-[var(--ink-faint)] flex flex-col sm:flex-row items-center justify-between gap-2 bg-[var(--navy-card)]">
+        <div>
+          <span>CoNDA Protocol — Autonomous Agent Collusion Detection & Audit Layer</span>
         </div>
-      </div>
-    </main>
-  )
+        <div className="flex items-center gap-4 text-[11px]">
+          <span>FastAPI / SQLite</span>
+          <span>•</span>
+          <span>Real M2 Detector</span>
+          <span>•</span>
+          <span>Local Anvil Ethereum-Compatible</span>
+        </div>
+      </footer>
+    </div>
+  );
 }
