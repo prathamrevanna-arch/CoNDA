@@ -78,6 +78,7 @@ app = FastAPI(
 
 class StartRunRequest(BaseModel):
     scenario: str = Field(default="default", examples=["default"])
+    seed: Optional[int] = Field(default=None)
 
 
 class StartRunResponse(BaseModel):
@@ -187,7 +188,8 @@ async def run_start(body: StartRunRequest) -> dict:
         )
 
     # Delegate entirely to the existing orchestrator
-    run_id = await start_run(scenario=body.scenario, seed=0)
+    seed = body.seed if body.seed is not None else (42 if body.scenario == "cartel_vs_competitive" else 0)
+    run_id = await start_run(scenario=body.scenario, seed=seed)
     return {"run_id": run_id}
 
 
