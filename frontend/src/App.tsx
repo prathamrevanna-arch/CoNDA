@@ -1,92 +1,51 @@
-import { useMemo, useState } from "react"
-import { AgentTable } from "@/components/AgentTable"
-import { CasePanel } from "@/components/CasePanel"
-import { DashboardHeader } from "@/components/DashboardHeader"
-import { Panel } from "@/components/Panel"
-import { PriceChart } from "@/components/PriceChart"
-import { RiskGauge } from "@/components/RiskGauge"
-import { ScenarioSelector } from "@/components/ScenarioSelector"
-import { SignalBreakdown } from "@/components/SignalBreakdown"
-import { useLiveSeries } from "@/hooks/useLiveSeries"
-import { AGENTS, CASES, generateSeries, SCENARIOS, SHOCK_EVENTS, SIGNALS } from "@/mocks/data"
-import type { Case } from "@/types"
+import { useMemo, useState } from 'react';
+import { Activity, BarChart3, BookOpen, ChevronLeft, ChevronRight, CircleHelp, FileText, LayoutDashboard, Menu, Radio, ShieldCheck, X } from 'lucide-react';
+import { AgentTable } from '@frontend/components/AgentTable';
+import { CasePanel } from '@frontend/components/CasePanel';
+import { PriceChart } from '@frontend/components/PriceChart';
+import { RiskGauge } from '@frontend/components/RiskGauge';
+import { CurrencyAnimation } from '@frontend/components/CurrencyAnimation';
+import { ScenarioPicker } from '@frontend/components/ScenarioPicker';
+import { SignalBars } from '@frontend/components/SignalBars';
+import { useLiveFeed } from '@frontend/hooks/useLiveFeed';
+import type { AgentRow, CaseRecord, RiskPayload, TickPayload } from '@frontend/types';
 
-export default function App() {
-  const [scenarioId, setScenarioId] = useState(SCENARIOS[0].id)
-  const [running, setRunning] = useState(true)
-  const [runId, setRunId] = useState("RUN-8F42A1")
-  const { series, setSeries } = useLiveSeries(running)
-  const [cases, setCases] = useState<Case[]>(CASES)
+type Page = 'overview' | 'signals' | 'cases' | 'methodology';
+const navItems: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard }, { id: 'signals', label: 'Signal analysis', icon: BarChart3 }, { id: 'cases', label: 'Cases & challenges', icon: FileText }, { id: 'methodology', label: 'Methodology', icon: BookOpen },
+];
 
-  const scenario = useMemo(() => SCENARIOS.find((s) => s.id === scenarioId)!, [scenarioId])
+function App() {
+  const [page, setPage] = useState<Page>('overview');
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileNav, setMobileNav] = useState(false);
+  const { ticks, risk, cases, connection, challenge } = useLiveFeed();
+  const latestTick = ticks[ticks.length - 1];
+  const agents = useMemo<AgentRow[]>(() => ['A1', 'A2', 'A3', 'A4'].map((agent, index) => ({ agent_id: agent, lastPrice: (latestTick?.price ?? 104.1) + (index - 1.5) * .18, pnl: (latestTick?.pnl ?? 1243.2) - index * 218.4, risk: index === 1 || index === 2 ? risk.risk_score : Math.max(18, risk.risk_score - 28 - index * 7), side: index % 2 ? 'ask' : 'bid' })), [latestTick, risk.risk_score]);
+  const startScenario = async (scenario: string) => { const api = import.meta.env.VITE_API_URL as string | undefined; if (api) await fetch(`${api}/run/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scenario }) }); };
+  const connectionLabel = connection === 'live' ? 'Live stream' : connection === 'reconnecting' ? 'Reconnecting' : 'Demo stream';
 
-  function handleStart() {
-    setSeries(generateSeries(60, Math.floor(Math.random() * 1e9)))
-    setRunId(`RUN-${Math.random().toString(16).slice(2, 8).toUpperCase()}`)
-    setRunning(true)
-  }
-
-  function handleSubmitChallenge(id: string) {
-    setCases((prev) =>
-      prev.map((c) =>
-        c.id === id && c.status === "OPEN"
-          ? {
-              ...c,
-              status: "CHALLENGED",
-              challengeTx: "0x" + Math.random().toString(16).slice(2).padEnd(64, "0").slice(0, 64),
-            }
-          : c,
-      ),
-    )
-  }
-
-  return (
-    <main className="min-h-screen bg-navy text-ink">
-      <DashboardHeader scenarioName={scenario.name} connected={running} runId={runId} />
-
-      <div className="mx-auto grid max-w-[1600px] grid-cols-12 gap-4 p-4">
-        <div className="col-span-3 flex flex-col gap-4">
-          <Panel title="Coordination Risk" subtitle="Aggregate detector score">
-            <RiskGauge value={87} />
-            <p className="mt-3 text-center text-xs leading-snug text-ink-muted">
-              Coordination Risk: 87/100 — evidence of coordinated behavior, contestable by challenge.
-            </p>
-          </Panel>
-
-          <Panel title="Scenario" subtitle="Simulated DeFi market">
-            <ScenarioSelector
-              scenarios={SCENARIOS}
-              selectedId={scenarioId}
-              onSelect={setScenarioId}
-              onStart={handleStart}
-              running={running}
-            />
-          </Panel>
-        </div>
-
-        <div className="col-span-6 flex flex-col gap-4">
-          <Panel
-            title="Observed vs Competitive Reference Price"
-            subtitle="Mid-price divergence with shock-event markers"
-          >
-            <PriceChart data={series} shocks={SHOCK_EVENTS} />
-          </Panel>
-
-          <Panel title="Agent Activity" subtitle={`${AGENTS.length} agents in current run`}>
-            <AgentTable agents={AGENTS} />
-          </Panel>
-        </div>
-
-        <div className="col-span-3 flex flex-col gap-4">
-          <Panel title="Signal Contribution" subtitle="Why the score is what it is">
-            <SignalBreakdown signals={SIGNALS} />
-          </Panel>
-
-          <Panel title="Case Lifecycle" subtitle="Contestable evidence records">
-            <CasePanel cases={cases} onSubmitChallenge={handleSubmitChallenge} />
-          </Panel>
-        </div>
-      </div>
+  return <div className="app-shell">
+    <aside className={`sidebar ${collapsed ? 'collapsed' : ''} ${mobileNav ? 'mobile-open' : ''}`}>
+      <div className="brand"><div className="brand-mark"><ShieldCheck size={18} /></div><span>CoNDA</span><button className="icon-button sidebar-close" onClick={() => setMobileNav(false)} aria-label="Close navigation"><X size={17} /></button></div>
+      <div className="workspace"><span className="workspace-kicker">Workspace</span><strong>Market integrity</strong><span className="workspace-dot"><i /> Simulation · 04</span></div>
+      <nav aria-label="Main navigation">{navItems.map(({ id, label, icon: Icon }) => <button className={page === id ? 'nav-item active' : 'nav-item'} key={id} onClick={() => { setPage(id); setMobileNav(false); }} title={collapsed ? label : undefined}><Icon size={18} /><span>{label}</span>{id === 'cases' && cases.length > 0 && <b>{cases.length}</b>}</button>)}</nav>
+      <div className="sidebar-footer"><div className="system-status"><span className="status-pulse" />Systems nominal</div><button className="collapse-button" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>{collapsed ? <ChevronRight size={17} /> : <><ChevronLeft size={17} /><span>Collapse sidebar</span></>}</button></div>
+    </aside>
+    {mobileNav && <button className="mobile-scrim" onClick={() => setMobileNav(false)} aria-label="Close navigation" />}
+    <main className="main-content">
+      <header className="topbar"><button className="mobile-menu icon-button" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={20} /></button><div className="breadcrumb"><span>CoNDA</span><span>/</span><strong>{navItems.find((item) => item.id === page)?.label}</strong></div><div className="topbar-actions"><div className={`connection ${connection}`}><span />{connectionLabel}</div><ScenarioPicker onStart={startScenario} /></div></header>
+      {page === 'overview' && <Overview risk={risk} ticks={ticks} agents={agents} cases={cases} challenge={challenge} />}
+      {page === 'signals' && <Signals risk={risk} ticks={ticks} />}
+      {page === 'cases' && <Cases cases={cases} onChallenge={challenge} />}
+      {page === 'methodology' && <Methodology />}
     </main>
-  )
+  </div>;
 }
+
+function PageHeader({ eyebrow, title, copy }: { eyebrow: string; title: string; copy: string }) { return <div className="page-header"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{copy}</p></div>; }
+function Overview({ risk, ticks, agents, cases, challenge }: { risk: RiskPayload; ticks: TickPayload[]; agents: AgentRow[]; cases: CaseRecord[]; challenge: (id: number) => void }) { return <div className="page"><CurrencyAnimation /><section className="metric-grid"><div className="metric-card accent"><span>Current risk score</span><strong>{risk.risk_score}<small>/100</small></strong><em><Radio size={13} />{risk.verdict} signal</em></div><div className="metric-card"><span>Observed mid-price</span><strong>${risk.counterfactual.observed_price.toFixed(2)}</strong><em className="warning-text">+{risk.counterfactual.gap_pct.toFixed(1)}% vs reference</em></div><div className="metric-card"><span>Open investigations</span><strong>{cases.filter((item) => item.status === 'OPEN').length + cases.filter((item) => item.status === 'ESCALATED').length}</strong><em><Activity size={13} />Across {cases.length} total cases</em></div><div className="metric-card"><span>Evidence compute</span><strong>{risk.computed_ms}<small>ms</small></strong><em className="muted">Window {risk.window_start}–{risk.window_end}</em></div></section><section className="hero-grid"><div className="panel chart-panel"><div className="panel-heading"><div><span className="eyebrow">Market deviation</span><h2>Observed vs competitive reference</h2></div><span className="live-tag"><i /> updating</span></div><PriceChart ticks={ticks} /></div><RiskGauge score={risk.risk_score} /></section><section className="content-grid"><div className="panel"><div className="panel-heading"><div><span className="eyebrow">Agent activity</span><h2>Participants in this window</h2></div><button className="text-button">View all <ChevronRight size={15} /></button></div><AgentTable rows={agents} /></div><div className="panel signal-preview"><div className="panel-heading"><div><span className="eyebrow">Evidence breakdown</span><h2>What drives the score</h2></div><button className="text-button">Explore <ChevronRight size={15} /></button></div><SignalBars signals={risk.signals} /></div></section><section className="panel case-preview"><div className="panel-heading"><div><span className="eyebrow">Contestable cases</span><h2>Recent investigations</h2></div><button className="text-button">Open case view <ChevronRight size={15} /></button></div><CasePanel cases={cases} onChallenge={challenge} /></section></div>; }
+function Signals({ risk, ticks }: { risk: RiskPayload; ticks: TickPayload[] }) { return <div className="page"><PageHeader eyebrow="Detailed analysis" title="Evidence, not conclusions." copy="Each signal is shown with its measurable contribution and plain-language explanation. Missing signals are omitted from the analysis." /><div className="analysis-layout"><div className="panel score-summary"><span className="eyebrow">Window assessment</span><div className="big-score">{risk.risk_score}<small>/100</small></div><span className={`status ${risk.verdict.toLowerCase()}`}>{risk.verdict} signal</span><p>Agents {risk.group.join(' and ')} were assessed across ticks {risk.window_start}–{risk.window_end}.</p><div className="hash">Evidence hash <code>{risk.evidence_hash}</code></div></div><div className="panel"><div className="panel-heading"><div><span className="eyebrow">Signal contributions</span><h2>Why the score moved</h2></div><span className="muted">{Object.keys(risk.signals).length} active signals</span></div><SignalBars signals={risk.signals} /></div></div><div className="panel wide-panel"><div className="panel-heading"><div><span className="eyebrow">Pricing context</span><h2>Competitive gap over time</h2></div></div><PriceChart ticks={ticks} /></div></div>; }
+function Cases({ cases, onChallenge }: { cases: CaseRecord[]; onChallenge: (id: number) => void }) { return <div className="page"><PageHeader eyebrow="Case registry" title="A transparent review trail." copy="Every case remains contestable. Follow its current status, supporting evidence, and on-chain actions in one place." /><div className="case-stats"><div><span>Total cases</span><strong>{cases.length}</strong></div><div><span>Under review</span><strong>{cases.filter((item) => item.status === 'OPEN').length}</strong></div><div><span>Challenged</span><strong>{cases.filter((item) => item.status === 'CHALLENGED').length}</strong></div><div><span>Cleared</span><strong>{cases.filter((item) => item.status === 'CLEARED').length}</strong></div></div><div className="panel case-page-panel"><div className="panel-heading"><div><span className="eyebrow">All activity</span><h2>Case lifecycle</h2></div><span className="muted">On-chain registry</span></div><CasePanel cases={cases} onChallenge={onChallenge} /></div></div>; }
+function Methodology() { return <div className="page"><PageHeader eyebrow="About CoNDA" title="Designed for accountable detection." copy="CoNDA surfaces behavioral evidence that can be reviewed, challenged, and resolved. It does not label agents guilty." /><div className="method-grid"><div className="panel method-intro"><div className="method-number">01</div><h2>Competitive counterfactual</h2><p>Observed prices are compared with a reference price representing a competitive market. The gap gives the dashboard a stable context for interpreting coordination risk.</p></div><div className="panel method-intro"><div className="method-number">02</div><h2>Behavioral signals</h2><p>Signals capture synchronization, deviation response, and economic benefit within a time window. Each contribution remains visible instead of hiding behind one composite score.</p></div><div className="panel method-intro"><div className="method-number">03</div><h2>Contestable cases</h2><p>When evidence crosses a threshold, a case is opened on the local chain. Participants can submit a policy commitment and trace for review.</p></div></div><div className="note"><CircleHelp size={18} /><div><strong>Interpretation note</strong><p>Coordination Risk is an analytical score from 0–100. It is not a probability of collusion and it is not a finding of wrongdoing.</p></div></div></div>; }
+export default App;
